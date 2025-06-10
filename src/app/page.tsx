@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { 
   Send, Plus, Package, ShoppingCart, Users, BarChart3, Settings, Search, Filter, Edit, Trash2, Eye, 
   TrendingUp, DollarSign, AlertCircle, CheckCircle, Clock, MessageCircle, LayoutGrid, ArrowLeft, 
-  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X, Store // Added Store
+  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X, Store, Link as LinkIcon // Added Store, LinkIcon
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,8 +19,9 @@ import { mockStoreData, StoreData, Product, Order, AnalyticsData, AISuggestion }
 import { suggestNextSteps, SuggestNextStepsInput } from '@/ai/flows/suggest-next-steps';
 import { generateProductDescription, GenerateProductDescriptionInput } from '@/ai/flows/generate-product-description';
 import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow';
+import { queryShopifyAgent, ShopifyAgentInput, ShopifyAgentOutput } from '@/ai/flows/shopify-agent-flow'; // New Shopify Agent
 import { useToast } from "@/hooks/use-toast";
-import { getShopInfo } from '@/services/shopify-service'; // Import Shopify service
+import { getShopInfo, ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service'; // Import Shopify service & type
 
 type UIMode = 'conversational' | 'traditional';
 type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'reports' | 'settings';
@@ -39,7 +40,7 @@ interface AIMessage {
   text?: string;
   sender: 'ai' | 'user';
   timestamp: Date;
-  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation';
+  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation' | 'shopify_agent_response' | 'shopify_product_card';
   data?: any; 
   actions?: { text: string; action: string; variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined }[];
 }
@@ -63,7 +64,7 @@ export default function HybridAdminPanelPage() {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 1,
-      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can also upload a product image for analysis.",
+      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can also upload a product image for analysis or ask about your Shopify store (e.g., 'shopify: list my products').",
       sender: 'ai',
       timestamp: new Date(),
       type: 'welcome',
@@ -71,6 +72,7 @@ export default function HybridAdminPanelPage() {
         { text: "Show me my dashboard", action: "show_dashboard"},
         { text: "List my products", action: "show_products"},
         { text: "Any urgent tasks?", action: "show_urgent_tasks"},
+        { text: "Ask Shopify: List 3 products", action: "ask_shopify_list_3_products"},
       ]
     }
   ]);
@@ -80,7 +82,10 @@ export default function HybridAdminPanelPage() {
   const [selectedView, setSelectedView] = useState<TraditionalView>('dashboard');
   const [storeData, setStoreData] = useState<StoreData>(mockStoreData);
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
+  
   const [formattedTodaySales, setFormattedTodaySales] = useState<string | null>(null);
+  const [formattedConversionRate, setFormattedConversionRate] = useState<string | null>(null);
+
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
@@ -104,6 +109,15 @@ export default function HybridAdminPanelPage() {
   }, [messages, scrollToBottom]);
 
   useEffect(() => {
+    if (storeData?.analytics?.todaySales !== undefined) {
+      setFormattedTodaySales(storeData.analytics.todaySales.toLocaleString());
+    }
+    if (storeData?.analytics?.conversionRate !== undefined) {
+        setFormattedConversionRate(storeData.analytics.conversionRate.toLocaleString());
+    }
+  }, [storeData?.analytics]);
+
+  useEffect(() => {
     const fetchSuggestions = async () => {
       try {
         const input: SuggestNextStepsInput = {
@@ -124,12 +138,6 @@ export default function HybridAdminPanelPage() {
   }, [storeData?.analytics]);
 
   useEffect(() => {
-    if (storeData?.analytics?.todaySales !== undefined) {
-      setFormattedTodaySales(storeData.analytics.todaySales.toLocaleString());
-    }
-  }, [storeData?.analytics?.todaySales]);
-
-  useEffect(() => {
     async function fetchAndSetShopInfo() {
       try {
         setShopifyError(null);
@@ -137,11 +145,11 @@ export default function HybridAdminPanelPage() {
         if (info) {
           setShopifyStoreInfo(info);
         } else {
-          setShopifyError("Could not retrieve Shopify store information. Ensure .env variables are correct.");
+          setShopifyError("Could not retrieve Shopify store information. Ensure .env variables are correct and client initialized.");
         }
       } catch (error: any) {
         console.error("Error fetching Shopify store info in component:", error);
-        setShopifyError(`Failed to connect to Shopify: ${error.message || 'Unknown error'}. Check .env variables and API access.`);
+        setShopifyError(`Failed to connect to Shopify: ${error.message || 'Unknown error'}. Check .env, API access, and connectivity.`);
         setShopifyStoreInfo(null);
       }
     }
@@ -163,7 +171,7 @@ export default function HybridAdminPanelPage() {
       inventory: 10, // Default inventory
       status: "active",
       sales: 0,
-      image: aiProductContext.imageDataUrl || "📦",
+      image: aiProductContext.imageDataUrl || "https://placehold.co/100x100.png?text=📦", // Placeholder image
       sku: `SKU-${Date.now().toString().slice(-5)}`,
       category: aiProductContext.category || "Uncategorized",
       description: `${aiProductContext.tags ? `Tags: ${aiProductContext.tags.join(', ')}\n\n` : ''}${aiProductContext.fullDescription || aiProductContext.initialDescription || 'No description yet.'}`,
@@ -188,10 +196,47 @@ export default function HybridAdminPanelPage() {
     toast({ title: "Product Added!", description: `${newProduct.name} is now in your catalog.` });
   };
 
+  const processShopifyQuery = async (queryText: string): Promise<Partial<AIMessage>> => {
+    setIsTyping(true);
+    try {
+      const agentInput: ShopifyAgentInput = { query: queryText };
+      const agentResult = await queryShopifyAgent(agentInput);
+      setIsTyping(false);
+
+      // Attempt to parse product data if present in the response for card display
+      // This is a simple heuristic; a more robust solution would involve structured data from the agent.
+      let productDataForCard: ServiceShopifyProduct | null = null;
+      if (agentResult.response.includes("Product ID:") && agentResult.response.includes("Name:")) {
+        // Basic check for product details in the response
+        // This part would need to be more robust if we want to reliably extract structured data
+        // For now, we'll just pass the text response.
+      }
+
+
+      return {
+        type: 'shopify_agent_response',
+        text: agentResult.response,
+        data: agentResult.isError ? { error: agentResult.errorMessage } : { productDataForCard }, // Pass data for potential card rendering
+      };
+    } catch (error: any) {
+      console.error("Error processing Shopify query with agent:", error);
+      setIsTyping(false);
+      return { type: 'error', text: `Sorry, I couldn't process your Shopify request: ${error.message || "Unknown error"}` };
+    }
+  };
+
 
   const processCommand = async (input: string, currentMessages: AIMessage[], currentAiProductContext: AIProductContext): Promise<Partial<AIMessage>> => {
     const command = input.toLowerCase().trim();
     const lastAiMessage = currentMessages.filter(m => m.sender === 'ai').pop();
+
+    if (command.startsWith("shopify:")) {
+      const shopifyQueryText = command.substring("shopify:".length).trim();
+      if (!shopifyQueryText) {
+        return { type: 'help', text: "Please provide a query after 'shopify:'. For example, 'shopify: list my products'." };
+      }
+      return processShopifyQuery(shopifyQueryText);
+    }
 
     if (lastAiMessage?.type === 'image_analysis_result' && currentAiProductContext.imageDataUrl) {
         setAiProductContext(prev => ({...prev, productName: input}));
@@ -256,11 +301,12 @@ What's next?`,
     if (command.includes('product') && (command.includes('list') || command.includes('show') || command.includes('all'))) {
       return {
         type: 'product_list',
-        text: "Here's your product catalog:",
+        text: "Here's your (mock) product catalog:", // Clarify it's mock data
         data: storeData.products,
         actions: [
           { text: "Add New Product (Manual)", action: "add_product_interactive", variant: "outline" },
           { text: "Upload Image to Add", action: "trigger_image_upload_for_product", variant: "default"},
+          { text: "Ask Shopify: List products", action: "ask_shopify_list_products", variant: "secondary"}
         ]
       };
     }
@@ -302,11 +348,12 @@ What's next?`,
     if (command.includes('order') || command.includes('sale')) {
       return {
         type: 'orders_list',
-        text: "Here are your recent orders:",
+        text: "Here are your recent (mock) orders:", // Clarify mock
         data: storeData.orders,
         actions: [
           { text: "Filter Orders", action: "filter_orders", variant: "outline" },
           { text: "Process Pending", action: "process_pending_orders", variant: "default" },
+          { text: "Ask Shopify: List orders", action: "ask_shopify_list_orders", variant: "secondary" }
         ]
       };
     }
@@ -314,7 +361,7 @@ What's next?`,
     if (command.includes('urgent') || command.includes('task')) {
       const lowStockProducts = storeData.products.filter(p => p.inventory < 10 && p.status === 'active');
       const pendingOrders = storeData.orders.filter(o => o.status === 'pending' || o.status === 'processing');
-      let responseText = "Here are some items needing attention:\n";
+      let responseText = "Here are some items needing attention (from mock data):\n";
       if (lowStockProducts.length > 0) {
         responseText += `\n- ${lowStockProducts.length} product(s) are low on stock (e.g., ${lowStockProducts[0].name}).`;
       }
@@ -322,7 +369,7 @@ What's next?`,
         responseText += `\n- You have ${pendingOrders.length} order(s) to process (e.g., Order ${pendingOrders[0].id}).`;
       }
       if (lowStockProducts.length === 0 && pendingOrders.length === 0) {
-        responseText = "Things look good! No immediate urgent tasks found.";
+        responseText = "Things look good! No immediate urgent tasks found in mock data.";
       }
       return {
         text: responseText,
@@ -335,11 +382,11 @@ What's next?`,
     
     return {
       type: 'help',
-      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show products\n• Add/create product (you can upload an image too!)\n• Show orders/sales\n• Check urgent tasks\n\nHow can I assist you?",
+      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show products (mock data)\n• Add/create product (you can upload an image too!)\n• Show orders/sales (mock data)\n• Check urgent tasks (mock data)\n• Query Shopify: 'shopify: [your question]'\n\nHow can I assist you?",
        actions: [
         { text: "Show Dashboard", action: "show_dashboard"},
-        { text: "List Products", action: "show_products"},
-        { text: "View Orders", action: "show_orders"},
+        { text: "List Mock Products", action: "show_products"},
+        { text: "Ask Shopify: List products", action: "ask_shopify_list_products"},
       ]
     };
   };
@@ -453,6 +500,24 @@ What is the product name for this item?`,
         fileInputRef.current?.click();
         return;
     }
+    // Handle new Shopify quick actions
+    if (action === "ask_shopify_list_products") {
+        setInputValue("shopify: list products");
+        setTimeout(() => document.getElementById('send-chat-message-button')?.click(), 0);
+        return;
+    }
+    if (action === "ask_shopify_list_3_products") {
+        setInputValue("shopify: list 3 products");
+        setTimeout(() => document.getElementById('send-chat-message-button')?.click(), 0);
+        return;
+    }
+     if (action === "ask_shopify_list_orders") {
+        setInputValue("shopify: list orders"); // Example, tool not yet implemented
+        toast({ title: "Shopify Orders", description: "Order tools are not yet implemented.", variant: "default" });
+        // setTimeout(() => document.getElementById('send-chat-message-button')?.click(), 0);
+        return;
+    }
+
 
     if (mode === 'conversational') {
       let actionText = '';
@@ -502,37 +567,51 @@ What is the product name for this item?`,
     }
   };
 
-  const ProductCardChat = ({ product }: { product: Product }) => (
+  const ProductCardChat = ({ product, isShopifyProduct = false }: { product: Product | ServiceShopifyProduct, isShopifyProduct?: boolean }) => (
     <Card className="mb-3 shadow-sm hover:shadow-md transition-shadow">
       <CardHeader className="p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-2xl overflow-hidden">
-              {product.image.startsWith('http') || product.image.startsWith('data:') ? 
-                <Image src={product.image} alt={product.name} width={48} height={48} className="rounded-lg object-cover" data-ai-hint="product image"/> : 
-                <span className="text-2xl">{product.image}</span>
-              }
+              {isShopifyProduct ? (
+                (product as ServiceShopifyProduct).imageUrl ? 
+                  <Image src={(product as ServiceShopifyProduct).imageUrl!} alt={(product as ServiceShopifyProduct).title} width={48} height={48} className="rounded-lg object-cover" data-ai-hint="product image" /> :
+                  <Package className="w-6 h-6 text-muted-foreground" />
+              ) : (
+                (product as Product).image.startsWith('http') || (product as Product).image.startsWith('data:') ? 
+                  <Image src={(product as Product).image} alt={(product as Product).name} width={48} height={48} className="rounded-lg object-cover" data-ai-hint="product image"/> : 
+                  <span className="text-2xl">{(product as Product).image}</span>
+              )}
             </div>
             <div>
-              <CardTitle className="text-base">{product.name}</CardTitle>
-              <CardDescription className="text-xs">SKU: {product.sku} | Category: {product.category}</CardDescription>
+              <CardTitle className="text-base">{isShopifyProduct ? (product as ServiceShopifyProduct).title : (product as Product).name}</CardTitle>
+              <CardDescription className="text-xs">
+                {isShopifyProduct ? `ID: ${(product as ServiceShopifyProduct).id.split('/').pop()}` : `SKU: ${(product as Product).sku}`} | Category: {isShopifyProduct ? (product as ServiceShopifyProduct).vendor || 'N/A' : (product as Product).category}
+              </CardDescription>
             </div>
           </div>
-          <Badge variant={product.status === 'active' ? 'secondary' : product.status === 'out_of_stock' ? 'destructive': 'outline'}>
-            {product.status === 'active' ? 'Active' : product.status === 'out_of_stock' ? 'Out of Stock' : 'Archived'}
+          <Badge variant={product.status.toLowerCase() === 'active' ? 'secondary' : product.status.toLowerCase() === 'out_of_stock' ? 'destructive': 'outline'}>
+            {product.status.toLowerCase() === 'active' ? 'Active' : product.status.toLowerCase() === 'out_of_stock' ? 'Out of Stock' : product.status}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="p-4 text-sm">
         <div className="flex justify-between">
-          <span>Price: <span className="font-semibold">${product.price.toFixed(2)}</span></span>
-          <span>Inventory: <span className={`font-semibold ${product.inventory < 10 ? 'text-destructive' : ''}`}>{product.inventory} units</span></span>
+          <span>Price: <span className="font-semibold">{isShopifyProduct ? ((product as ServiceShopifyProduct).priceRange ? `${(product as ServiceShopifyProduct).priceRange?.minVariantPrice.amount} ${(product as ServiceShopifyProduct).priceRange?.minVariantPrice.currencyCode}`: 'N/A') : `$${(product as Product).price.toFixed(2)}`}</span></span>
+          <span>Inventory: <span className={`font-semibold ${((product as Product).inventory < 10 && !isShopifyProduct) || ((product as ServiceShopifyProduct).totalInventory !== null && (product as ServiceShopifyProduct).totalInventory! < 10 && isShopifyProduct) ? 'text-destructive' : ''}`}>{isShopifyProduct ? (product as ServiceShopifyProduct).totalInventory ?? 'N/A' : (product as Product).inventory} units</span></span>
         </div>
-        {product.description && <p className="mt-2 text-muted-foreground text-xs line-clamp-2 whitespace-pre-wrap">{product.description}</p>}
+        {(product as Product).description && !isShopifyProduct && <p className="mt-2 text-muted-foreground text-xs line-clamp-2 whitespace-pre-wrap">{(product as Product).description}</p>}
+        {(product as ServiceShopifyProduct).descriptionHtml && isShopifyProduct && <p className="mt-2 text-muted-foreground text-xs line-clamp-2" dangerouslySetInnerHTML={{ __html: (product as ServiceShopifyProduct).descriptionHtml!.substring(0,150) + '...' }} />}
       </CardContent>
       <CardFooter className="p-4 flex gap-2">
-         <Button size="sm" variant="outline" onClick={() => toast({ title: "Edit Product", description: `Editing ${product.name}`})}>Edit</Button>
-         <Button size="sm" variant="ghost" onClick={() => toast({ title: "View Product", description: `Viewing ${product.name}`})}>View Details</Button>
+         {isShopifyProduct && (product as ServiceShopifyProduct).onlineStoreUrl && (
+            <Button size="sm" variant="outline" onClick={() => window.open((product as ServiceShopifyProduct).onlineStoreUrl!, '_blank')}>
+                <LinkIcon className="w-3 h-3 mr-1.5" /> View on Shopify
+            </Button>
+         )}
+         <Button size="sm" variant={isShopifyProduct ? "secondary" : "outline"} onClick={() => toast({ title: `Product Action`, description: `Action for ${isShopifyProduct ? (product as ServiceShopifyProduct).title : (product as Product).name}`})}>
+            {isShopifyProduct ? 'Shopify Actions' : 'Edit'}
+         </Button>
       </CardFooter>
     </Card>
   );
@@ -565,27 +644,27 @@ What is the product name for this item?`,
   );
 
   const AnalyticsCardChat = ({ analytics }: { analytics: AnalyticsData }) => {
-    const [formattedSales, setFormattedSales] = useState<string | null>(null);
-    const [formattedConversion, setFormattedConversion] = useState<string | null>(null);
+    const [localFormattedSales, setLocalFormattedSales] = useState<string | null>(null);
+    const [localFormattedConversion, setLocalFormattedConversion] = useState<string | null>(null);
 
     useEffect(() => {
       if (analytics?.todaySales !== undefined) {
-        setFormattedSales(analytics.todaySales.toLocaleString());
+        setLocalFormattedSales(analytics.todaySales.toLocaleString());
       }
       if (analytics?.conversionRate !== undefined) {
-        setFormattedConversion(analytics.conversionRate.toLocaleString());
+        setLocalFormattedConversion(analytics.conversionRate.toLocaleString());
       }
     }, [analytics]);
     
     return (
       <Card className="mb-3 shadow-sm">
         <CardHeader className="p-4">
-          <CardTitle className="text-base">Today's Performance</CardTitle>
+          <CardTitle className="text-base">Today's Performance (Mock Data)</CardTitle>
         </CardHeader>
         <CardContent className="p-4 text-sm grid grid-cols-2 gap-2">
-          <div>Sales: <span className="font-semibold">{formattedSales !== null ? `$${formattedSales}` : 'Loading...'}</span></div>
+          <div>Sales: <span className="font-semibold">{localFormattedSales !== null ? `$${localFormattedSales}` : 'Loading...'}</span></div>
           <div>Orders: <span className="font-semibold">{analytics?.todayOrders ?? 'N/A'}</span></div>
-          <div>Conversion: <span className="font-semibold">{formattedConversion !== null ? `${formattedConversion}%` : 'Loading...'}</span></div>
+          <div>Conversion: <span className="font-semibold">{localFormattedConversion !== null ? `${localFormattedConversion}%` : 'Loading...'}</span></div>
           <div>Top Product: <span className="font-semibold">{analytics?.topProduct ?? 'N/A'}</span></div>
         </CardContent>
       </Card>
@@ -626,6 +705,12 @@ What is the product name for this item?`,
             {message.type === 'product_added_confirmation' && message.data && (
                 <div className="mt-3">
                     <ProductCardChat product={message.data as Product} />
+                </div>
+            )}
+
+            {message.type === 'shopify_agent_response' && message.data?.productDataForCard && (
+                 <div className="mt-3">
+                    <ProductCardChat product={message.data.productDataForCard as ServiceShopifyProduct} isShopifyProduct={true} />
                 </div>
             )}
 
@@ -698,8 +783,8 @@ What is the product name for this item?`,
       <CardHeader>
         <div className="flex justify-between items-center">
           <div>
-            <CardTitle className="text-2xl">Product Catalog</CardTitle>
-            <CardDescription>Manage your product inventory and listings.</CardDescription>
+            <CardTitle className="text-2xl">Product Catalog (Mock Data)</CardTitle>
+            <CardDescription>Manage your product inventory and listings. For Shopify products, use the chat.</CardDescription>
           </div>
           <div className="flex space-x-2">
             <Button variant="outline"><Filter className="w-4 h-4 mr-2" />Filter</Button>
@@ -765,8 +850,8 @@ What is the product name for this item?`,
       <CardHeader>
         <div className="flex justify-between items-center">
           <div>
-            <CardTitle className="text-2xl">Order Management</CardTitle>
-            <CardDescription>Track and process customer orders.</CardDescription>
+            <CardTitle className="text-2xl">Order Management (Mock Data)</CardTitle>
+            <CardDescription>Track and process customer orders. For Shopify orders, use the chat.</CardDescription>
           </div>
           <div className="flex space-x-2">
             <Button variant="outline"><Download className="w-4 h-4 mr-2" />Export</Button>
@@ -862,7 +947,7 @@ What is the product name for this item?`,
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Revenue (Mock)</CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -872,7 +957,7 @@ What is the product name for this item?`,
           </Card>
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Orders Today</CardTitle>
+              <CardTitle className="text-sm font-medium">Orders Today (Mock)</CardTitle>
               <ShoppingCart className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -882,7 +967,7 @@ What is the product name for this item?`,
           </Card>
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Conversion Rate</CardTitle>
+              <CardTitle className="text-sm font-medium">Conversion Rate (Mock)</CardTitle>
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -892,7 +977,7 @@ What is the product name for this item?`,
           </Card>
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Active Products</CardTitle>
+              <CardTitle className="text-sm font-medium">Active Products (Mock)</CardTitle>
               <Package className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -905,7 +990,7 @@ What is the product name for this item?`,
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader>
-              <CardTitle>Recent Orders</CardTitle>
+              <CardTitle>Recent Orders (Mock)</CardTitle>
               <CardDescription>A quick glance at the latest orders.</CardDescription>
             </CardHeader>
             <CardContent>
@@ -923,7 +1008,7 @@ What is the product name for this item?`,
           </Card>
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader>
-              <CardTitle>Inventory Status</CardTitle>
+              <CardTitle>Inventory Status (Mock)</CardTitle>
               <CardDescription>Products nearing low stock levels.</CardDescription>
             </CardHeader>
             <CardContent>
@@ -1025,7 +1110,7 @@ What is the product name for this item?`,
             <div className="flex items-center space-x-4">
                <div className="flex items-center space-x-2 text-xs text-muted-foreground">
                 <div className={`w-2 h-2 rounded-full ${mode === 'conversational' ? 'bg-primary animate-pulse' : (shopifyStoreInfo ? 'bg-green-500' : shopifyError ? 'bg-red-500' : 'bg-yellow-500')}`}></div>
-                <span>{mode === 'conversational' ? 'AI Active' : (shopifyStoreInfo ? 'Shopify Connected' : shopifyError ? 'Shopify Error' : 'Shopify Connecting...')}</span>
+                <span>{mode === 'conversational' ? 'AI Active' : (shopifyStoreInfo ? 'Shopify Connected' : shopifyError ? 'Shopify Connection Error' : 'Shopify Connecting...')}</span>
               </div>
               <Input type="search" placeholder="Search everything..." className="w-64 h-9 rounded-full text-xs bg-muted border-none focus-visible:ring-primary" />
               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground"><Bell className="w-5 h-5" /></Button>
@@ -1078,7 +1163,7 @@ What is the product name for this item?`,
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder={imageDataUrl ? "Add details for the image or send as is..." : isAwaitingFeatures ? `Enter features/keywords for "${aiProductContext.productName}"...` : "Ask about products, orders, or type a command..."}
+                    placeholder={imageDataUrl ? "Add details for the image or send as is..." : isAwaitingFeatures ? `Enter features/keywords for "${aiProductContext.productName}"...` : "Ask about products, orders, or type 'shopify: [your query]'..."}
                     className="flex-1 p-3 border-border rounded-lg focus:ring-1 focus:ring-primary resize-none shadow-sm text-sm min-h-[40px]"
                     rows={1}
                   />
@@ -1094,7 +1179,7 @@ What is the product name for this item?`,
                 </div>
                 
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {['Show dashboard', 'List products', 'Any urgent tasks?'].map(suggestion => (
+                  {['Show dashboard', 'List products', 'shopify: list 2 products'].map(suggestion => (
                     <Button
                       key={suggestion}
                       size="sm"
@@ -1118,7 +1203,7 @@ What is the product name for this item?`,
               <div className="space-y-4">
                 <Card className="shadow-sm">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3 px-4">
-                    <CardTitle className="text-xs font-medium">Revenue Today</CardTitle>
+                    <CardTitle className="text-xs font-medium">Revenue Today (Mock)</CardTitle>
                     <DollarSign className="h-3 w-3 text-muted-foreground" />
                   </CardHeader>
                   <CardContent className="pb-3 px-4">
@@ -1129,7 +1214,7 @@ What is the product name for this item?`,
                 </Card>
                 <Card className="shadow-sm">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3 px-4">
-                    <CardTitle className="text-xs font-medium">Pending Orders</CardTitle>
+                    <CardTitle className="text-xs font-medium">Pending Orders (Mock)</CardTitle>
                     <Clock className="h-3 w-3 text-muted-foreground" />
                   </CardHeader>
                   <CardContent className="pb-3 px-4">
@@ -1138,7 +1223,7 @@ What is the product name for this item?`,
                 </Card>
                  <Card className="shadow-sm">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3 px-4">
-                    <CardTitle className="text-xs font-medium">Low Stock Items</CardTitle>
+                    <CardTitle className="text-xs font-medium">Low Stock Items (Mock)</CardTitle>
                     <Package className="h-3 w-3 text-muted-foreground" />
                   </CardHeader>
                   <CardContent className="pb-3 px-4">
@@ -1175,3 +1260,4 @@ What is the product name for this item?`,
     </div>
   );
 }
+
