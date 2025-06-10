@@ -1,22 +1,8 @@
 
 'use server';
 
-import { config } from 'dotenv';
-import path from 'path';
-
-// Explicitly load .env file from the project root
-const envPath = path.resolve(process.cwd(), '.env');
-// Enable debug mode for dotenv in development to see if it's finding/parsing the file
-const dotenvResult = config({ path: envPath, debug: process.env.NODE_ENV !== 'production' });
-
-if (dotenvResult.error) {
-  // This will log to your server console, not the browser
-  console.warn(`AI-Commerce Assistant (dotenv): Error loading .env file from ${envPath}:`, dotenvResult.error.message);
-} else if (Object.keys(dotenvResult.parsed || {}).length === 0) {
-  console.warn(`AI-Commerce Assistant (dotenv): Loaded .env file from ${envPath}, but it was empty or only contained comments. Please ensure your Shopify credentials are set.`);
-} else {
-  // console.log(`AI-Commerce Assistant (dotenv): Successfully loaded variables from ${envPath}.`);
-}
+// Note: Removed explicit dotenv.config() and path.resolve.
+// Next.js automatically loads .env files. Ensure your .env is in the project root.
 
 import { createAdminApiClient } from '@shopify/admin-api-client';
 
@@ -25,7 +11,6 @@ interface ShopInfo {
   email: string;
 }
 
-// Basic Product structure from Shopify API
 export interface ShopifyProduct {
   id: string;
   title: string;
@@ -33,24 +18,20 @@ export interface ShopifyProduct {
   totalInventory: number | null;
   vendor: string | null;
   onlineStoreUrl: string | null;
-  imageUrl?: string | null; // Add imageUrl
-  descriptionHtml?: string; // For getProductById
-  priceRange?: { // For getProductById
+  imageUrl?: string | null;
+  descriptionHtml?: string;
+  priceRange?: {
     minVariantPrice: { amount: string; currencyCode: string };
     maxVariantPrice: { amount: string; currencyCode: string };
   };
-  // For listShopifyProducts, if featuredImage is directly on node
   featuredImage?: {
     url: string;
   } | null;
-   // For getShopifyProductById, if images is used
   images?: {
     edges: Array<{ node: { url: string } }>;
   } | null;
 }
 
-
-// Type for the Shopify client instance
 type ShopifyApiClient = ReturnType<typeof createAdminApiClient>;
 let shopifyClientInstance: ShopifyApiClient | null = null;
 
@@ -64,29 +45,28 @@ function getShopifyClient(): ShopifyApiClient {
 
   if (!shopDomain) {
     const errorMessage = `Shopify client initialization failed: SHOPIFY_SHOP_DOMAIN environment variable is not set or is undefined. 
-    Attempted to load .env from: '${envPath}'. 
     Current value found for SHOPIFY_SHOP_DOMAIN: '${shopDomain}'. 
-    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_SHOP_DOMAIN entry (e.g., SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com) and that you've restarted your development server.`;
+    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_SHOP_DOMAIN entry (e.g., SHOPIFY_SHOP_DOMAIN=your-shop-name.myshopify.com) and that you've restarted your development server.`;
     console.error(errorMessage);
     throw new Error(errorMessage);
   }
+
   if (!accessToken) {
     const errorMessage = `Shopify client initialization failed: SHOPIFY_ADMIN_ACCESS_TOKEN environment variable is not set or is undefined. 
-    Attempted to load .env from: '${envPath}'. 
-    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_ADMIN_ACCESS_TOKEN entry and that you've restarted your development server.`;
+    Current value found for SHOPIFY_ADMIN_ACCESS_TOKEN: '********' (token value hidden for security). 
+    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_ADMIN_ACCESS_TOKEN entry (e.g., SHOPIFY_ADMIN_ACCESS_TOKEN=your_admin_api_access_token) and that you've restarted your development server.`;
     console.error(errorMessage);
     throw new Error(errorMessage);
   }
 
   try {
     shopifyClientInstance = createAdminApiClient({
-      storeDomain: shopDomain, // Use the correctly named variable here
-      apiVersion: '2024-07', // Use a recent, valid API version
+      storeDomain: shopDomain,
+      apiVersion: '2024-07',
       accessToken: accessToken,
     });
   } catch (error: any) {
-      const initErrorMessage = `Shopify client initialization failed during createAdminApiClient (for domain: '${shopDomain}'). Error: ${error.message || 'Unknown error during client creation.'}. 
-      Attempted to load .env from '${envPath}'.`;
+      const initErrorMessage = `Shopify client initialization failed during createAdminApiClient (for domain: '${shopDomain}'). Error: ${error.message || 'Unknown error during client creation.'}`;
       console.error(initErrorMessage);
       throw new Error(initErrorMessage);
   }
@@ -95,8 +75,7 @@ function getShopifyClient(): ShopifyApiClient {
 
 export async function getShopInfo(): Promise<ShopInfo | null> {
   try {
-    const client = getShopifyClient(); // This will throw if env vars are missing or client can't init
-
+    const client = getShopifyClient();
     const query = `
       query {
         shop {
@@ -106,7 +85,7 @@ export async function getShopInfo(): Promise<ShopInfo | null> {
       }
     `;
 
-    const response = await client.request<{ shop: ShopInfo }>(query); 
+    const response = await client.request<{ shop: ShopInfo }>(query);
 
     if (response.data?.shop) {
       return response.data.shop;
@@ -118,35 +97,19 @@ export async function getShopInfo(): Promise<ShopInfo | null> {
     }
     return null;
   } catch (error) {
-    let errorMessage = 'Failed to fetch shop info.';
+    let errorMessage = 'Failed to fetch shop info from Shopify.';
     if (error instanceof Error) {
         errorMessage += ` Details: ${error.message}`;
-        // Add envPath context if not already included from getShopifyClient's error
-        if (!error.message.includes("Attempted to load .env from")) {
-            errorMessage += ` (Attempted to load .env from '${envPath}')`;
-        }
-
-        // Add more specific hints based on error type, if not an initialization error
-        if (!error.message.toLowerCase().includes('initialization failed')) {
-            if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND') || error.message.includes('EAI_AGAIN')) {
-                errorMessage += ` (This could be due to an incorrect SHOPIFY_SHOP_DOMAIN: '${process.env.SHOPIFY_SHOP_DOMAIN}' or network issues.)`;
-            } else if (error.message.toLowerCase().includes('unauthorized') || error.message.toLowerCase().includes('forbidden') || (error.message.includes('401') || error.message.includes('403'))) {
-                errorMessage += ` (This could be due to an invalid SHOPIFY_ADMIN_ACCESS_TOKEN or insufficient permissions.)`;
-            }
+        if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND') || error.message.includes('EAI_AGAIN')) {
+            errorMessage += ` (This could be due to an incorrect SHOPIFY_SHOP_DOMAIN: '${process.env.SHOPIFY_SHOP_DOMAIN}' or network issues.)`;
+        } else if (error.message.toLowerCase().includes('unauthorized') || error.message.toLowerCase().includes('forbidden') || (error.message.includes('401') || error.message.includes('403'))) {
+            errorMessage += ` (This could be due to an invalid SHOPIFY_ADMIN_ACCESS_TOKEN or insufficient permissions.)`;
         }
     } else {
-      errorMessage += ` An unknown error occurred. (Attempted to load .env from '${envPath}')`;
+      errorMessage += ` An unknown error occurred.`;
     }
-    
-    // Avoid re-throwing generic error if a specific initialization error was already thrown
-    if (error instanceof Error && error.message.includes('Shopify client initialization failed')) {
-        // The error from getShopifyClient is specific enough
-        console.error("Re-throwing specific initialization error from getShopInfo:", error.message);
-        throw error;
-    } else {
-       console.error("Error in getShopInfo:", errorMessage); 
-       throw new Error(errorMessage); 
-    }
+    console.error("Error in getShopInfo:", errorMessage);
+    throw new Error(errorMessage);
   }
 }
 
@@ -176,7 +139,7 @@ export async function listShopifyProducts(count: number = 5): Promise<ShopifyPro
     if (response.data?.products?.edges) {
       return response.data.products.edges.map(edge => ({
         ...edge.node,
-        imageUrl: edge.node.featuredImage?.url || null 
+        imageUrl: edge.node.featuredImage?.url || null
       }));
     }
     if (response.errors) {
@@ -185,8 +148,8 @@ export async function listShopifyProducts(count: number = 5): Promise<ShopifyPro
     }
     return [];
   } catch (error) {
-    console.error(`Failed to fetch products from Shopify (attempted .env from '${envPath}'):`, error);
-    throw error; 
+    console.error(`Failed to fetch products from Shopify:`, error);
+    throw error;
   }
 }
 
@@ -239,7 +202,8 @@ export async function getShopifyProductById(productId: string): Promise<ShopifyP
     }
     return null;
   } catch (error) {
-    console.error(`Failed to fetch product ${formattedProductId} from Shopify (attempted .env from '${envPath}'):`, error);
-    throw error; 
+    console.error(`Failed to fetch product ${formattedProductId} from Shopify:`, error);
+    throw error;
   }
 }
+    
