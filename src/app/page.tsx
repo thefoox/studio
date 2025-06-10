@@ -2,10 +2,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Image from 'next/image'; // Added for image previews
 import { 
   Send, Plus, Package, ShoppingCart, Users, BarChart3, Settings, Search, Filter, Edit, Trash2, Eye, 
   TrendingUp, DollarSign, AlertCircle, CheckCircle, Clock, MessageCircle, LayoutGrid, ArrowLeft, 
-  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles
+  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp // Added ImageUp
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import { Progress } from "@/components/ui/progress";
 import { mockStoreData, StoreData, Product, Order, AnalyticsData, AISuggestion } from '@/lib/mock-data';
 import { suggestNextSteps, SuggestNextStepsInput } from '@/ai/flows/suggest-next-steps';
 import { generateProductDescription, GenerateProductDescriptionInput } from '@/ai/flows/generate-product-description';
+import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow'; // New flow
 import { useToast } from "@/hooks/use-toast";
 
 type UIMode = 'conversational' | 'traditional';
@@ -24,11 +26,11 @@ type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'repo
 
 interface AIMessage {
   id: number;
-  text: string;
+  text?: string; // Made optional for image-only messages
   sender: 'ai' | 'user';
   timestamp: Date;
-  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error';
-  data?: any;
+  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload';
+  data?: any; // Can hold product data, analytics data, image data, or analysis results
   actions?: { text: string; action: string; variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined }[];
 }
 
@@ -46,7 +48,7 @@ export default function HybridAdminPanelPage() {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 1,
-      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today?",
+      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can also upload a product image for analysis.",
       sender: 'ai',
       timestamp: new Date(),
       type: 'welcome',
@@ -64,6 +66,10 @@ export default function HybridAdminPanelPage() {
   const [storeData, setStoreData] = useState<StoreData>(mockStoreData);
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
   const [formattedTodaySales, setFormattedTodaySales] = useState<string | null>(null);
+
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -88,17 +94,19 @@ export default function HybridAdminPanelPage() {
         }
       } catch (error) {
         console.error("Failed to fetch AI suggestions:", error);
-        // Optionally show a toast message for the error
       }
     };
-    fetchSuggestions();
-  }, [storeData.analytics]);
+    if (storeData?.analytics?.todaySales !== undefined) { // Check if storeData and analytics are defined
+        fetchSuggestions();
+    }
+  }, [storeData?.analytics]);
 
   useEffect(() => {
-    if (storeData.analytics.todaySales !== undefined) {
+    if (storeData?.analytics?.todaySales !== undefined) {
       setFormattedTodaySales(storeData.analytics.todaySales.toLocaleString());
     }
-  }, [storeData.analytics.todaySales]);
+  }, [storeData?.analytics?.todaySales]);
+
 
   const processCommand = async (input: string): Promise<Partial<AIMessage>> => {
     const command = input.toLowerCase().trim();
@@ -130,7 +138,7 @@ export default function HybridAdminPanelPage() {
     if ((command.includes('add') || command.includes('create')) && command.includes('product')) {
       return {
         type: 'add_product_form',
-        text: "Let's add a new product. Please provide the product name, key features, and desired tone for the description (e.g., 'SuperWidget;eco-friendly,long-lasting,smart features;professional'). Or, type 'manual' to fill a form.",
+        text: "Let's add a new product. Please provide the product name, key features, and desired tone for the description (e.g., 'SuperWidget;eco-friendly,long-lasting,smart features;professional'). Or, type 'manual' to fill a form. You can also upload an image first for analysis.",
         actions: [
           { text: "Use AI for Description", action: "ai_product_description_prompt", variant: "default" },
           { text: "Add Manually", action: "manual_product_form", variant: "outline" },
@@ -139,7 +147,6 @@ export default function HybridAdminPanelPage() {
     }
     
     if (command.match(/([\w\s]+);([\w\s,]+);([\w\s]+)/) && (messages[messages.length-1]?.type === 'add_product_form' || messages[messages.length-2]?.type === 'add_product_form')) {
-        // Matches "Product Name;Feature1,Feature2;Tone"
         const parts = input.split(';');
         if (parts.length === 3) {
             const [productName, keyFeatures, tone] = parts.map(p => p.trim());
@@ -196,7 +203,7 @@ export default function HybridAdminPanelPage() {
     
     return {
       type: 'help',
-      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show products\n• Add/create product\n• Show orders/sales\n• Check urgent tasks\n\nHow can I assist you?",
+      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show products\n• Add/create product (you can upload an image too!)\n• Show orders/sales\n• Check urgent tasks\n\nHow can I assist you?",
        actions: [
         { text: "Show Dashboard", action: "show_dashboard"},
         { text: "List Products", action: "show_products"},
@@ -205,34 +212,94 @@ export default function HybridAdminPanelPage() {
     };
   };
 
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageDataUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() && !imageDataUrl) return;
     
+    const userMessageText = inputValue.trim();
+    const currentImageDataUrl = imageDataUrl; // Capture current image data URL
+
     const userMessage: AIMessage = {
       id: messages.length + 1,
-      text: inputValue,
+      text: userMessageText,
       sender: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
+      type: currentImageDataUrl ? 'user_image_upload' : undefined,
+      data: currentImageDataUrl ? { imageDataUrl: currentImageDataUrl, text: userMessageText } : {text: userMessageText}
     };
     
     setMessages(prev => [...prev, userMessage]);
-    const currentInput = inputValue;
     setInputValue('');
-    
+    setImageDataUrl(null);
+    setSelectedImageFile(null);
+    if(fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
+
     setIsTyping(true);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 600));
-    const response = await processCommand(currentInput);
-    const aiMessage: AIMessage = {
-      id: messages.length + 2, // this will be messages.length + 1 at the time of setting
-      sender: 'ai',
-      timestamp: new Date(),
-      ...response
-    };
+    await new Promise(resolve => setTimeout(resolve, 600)); // Simulate API call delay
+
+    if (currentImageDataUrl) {
+      try {
+        const analysisResult = await analyzeProductImage({ imageDataUri: currentImageDataUrl });
+        const aiResponseMessage: AIMessage = {
+          id: messages.length + 2, // Will be +1 at time of setting state
+          sender: 'ai',
+          timestamp: new Date(),
+          type: 'image_analysis_result',
+          text: `I've analyzed the image. Here's what I found:\nCategory: ${analysisResult.category}\nTags: ${analysisResult.tags.join(', ')}\n\nInitial description idea: "${analysisResult.initialDescription}"\n\nWhat is the product name? You can use this info to generate a full description.`,
+          data: { ...analysisResult, originalImage: currentImageDataUrl },
+          actions: [{text: "Generate Full Description", action: "add_product_interactive"}]
+        };
+        setMessages(prev => [...prev, aiResponseMessage]);
+        
+        // If there was also text, process it after image analysis
+        if (userMessageText) {
+            setIsTyping(true); // Keep typing indicator for text processing
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const textCommandResponse = await processCommand(userMessageText);
+            const textAiMessage: AIMessage = {
+                id: messages.length + 3, // Adjust ID accordingly
+                sender: 'ai',
+                timestamp: new Date(),
+                ...textCommandResponse
+            };
+            setMessages(prev => [...prev, textAiMessage]);
+        }
+
+      } catch (error) {
+        console.error("Error analyzing product image:", error);
+        const errorResponseMessage: AIMessage = {
+          id: messages.length + 2,
+          sender: 'ai',
+          timestamp: new Date(),
+          type: 'error',
+          text: "Sorry, I couldn't analyze the image. Please try again."
+        };
+        setMessages(prev => [...prev, errorResponseMessage]);
+      }
+    } else if (userMessageText) {
+      // Only text was sent
+      const response = await processCommand(userMessageText);
+      const aiMessage: AIMessage = {
+        id: messages.length + 2,
+        sender: 'ai',
+        timestamp: new Date(),
+        ...response
+      };
+      setMessages(prev => [...prev, aiMessage]);
+    }
     
     setIsTyping(false);
-    setMessages(prev => [...prev, aiMessage]);
   };
 
   const handleQuickAction = (action: string) => {
@@ -245,11 +312,10 @@ export default function HybridAdminPanelPage() {
           case 'dashboard': actionText = 'Show dashboard'; break;
           case 'products': actionText = 'List products'; break;
           case 'orders': actionText = 'Show orders'; break;
-          default: actionText = action; // Use action directly if not mapped
+          default: actionText = action; 
         }
       }
       setInputValue(actionText);
-      // Use a timeout to ensure input value is set before sending
       setTimeout(() => {
         document.getElementById('send-chat-message-button')?.click();
       }, 0);
@@ -271,7 +337,10 @@ export default function HybridAdminPanelPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-2xl">
-              {product.image}
+              {product.image.startsWith('http') || product.image.startsWith('data:') ? 
+                <Image src={product.image} alt={product.name} width={48} height={48} className="rounded-lg object-cover" data-ai-hint="product image"/> : 
+                product.image
+              }
             </div>
             <div>
               <CardTitle className="text-base">{product.name}</CardTitle>
@@ -329,13 +398,13 @@ export default function HybridAdminPanelPage() {
     const [formattedConversion, setFormattedConversion] = useState<string | null>(null);
 
     useEffect(() => {
-      if (analytics.todaySales !== undefined) {
+      if (analytics?.todaySales !== undefined) {
         setFormattedSales(analytics.todaySales.toLocaleString());
       }
-      if (analytics.conversionRate !== undefined) {
+      if (analytics?.conversionRate !== undefined) {
         setFormattedConversion(analytics.conversionRate.toLocaleString());
       }
-    }, [analytics.todaySales, analytics.conversionRate]);
+    }, [analytics?.todaySales, analytics?.conversionRate]);
     
     return (
       <Card className="mb-3 shadow-sm">
@@ -344,22 +413,20 @@ export default function HybridAdminPanelPage() {
         </CardHeader>
         <CardContent className="p-4 text-sm grid grid-cols-2 gap-2">
           <div>Sales: <span className="font-semibold">{formattedSales !== null ? `$${formattedSales}` : 'Loading...'}</span></div>
-          <div>Orders: <span className="font-semibold">{analytics.todayOrders}</span></div>
+          <div>Orders: <span className="font-semibold">{analytics?.todayOrders ?? 'N/A'}</span></div>
           <div>Conversion: <span className="font-semibold">{formattedConversion !== null ? `${formattedConversion}%` : 'Loading...'}</span></div>
-          <div>Top Product: <span className="font-semibold">{analytics.topProduct}</span></div>
+          <div>Top Product: <span className="font-semibold">{analytics?.topProduct ?? 'N/A'}</span></div>
         </CardContent>
       </Card>
     );
   };
   
-
   const MessageBubble = ({ message }: { message: AIMessage }) => {
     const isAI = message.sender === 'ai';
     const [formattedTimestamp, setFormattedTimestamp] = useState<string | null>(null);
 
     useEffect(() => {
       if (message.timestamp) {
-        // Ensure this runs only on the client
         setFormattedTimestamp(message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       }
     }, [message.timestamp]);
@@ -371,8 +438,20 @@ export default function HybridAdminPanelPage() {
           <div className={`px-4 py-3 rounded-lg shadow-md ${
             isAI ? 'bg-card text-card-foreground border' : 'bg-primary text-primary-foreground'
           }`}>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.text}</p>
+            {message.text && <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.text}</p>}
             
+            {message.type === 'user_image_upload' && message.data?.imageDataUrl && (
+              <div className="mt-2">
+                <Image src={message.data.imageDataUrl} alt="Uploaded preview" width={200} height={200} className="rounded-lg object-contain max-h-48" data-ai-hint="uploaded product" />
+              </div>
+            )}
+
+            {message.type === 'image_analysis_result' && message.data?.originalImage && (
+                 <div className="mt-2">
+                    <Image src={message.data.originalImage} alt="Analyzed image" width={150} height={150} className="rounded-lg object-contain max-h-36 mb-2" data-ai-hint="analyzed product" />
+                </div>
+            )}
+
             {message.type === 'product_list' && message.data && (
               <div className="mt-3 max-h-96 overflow-y-auto pr-2 space-y-2">
                 {(message.data as Product[]).map(product => (
@@ -471,7 +550,10 @@ export default function HybridAdminPanelPage() {
               <TableRow key={product.id}>
                 <TableCell>
                   <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center text-2xl">
-                    {product.image}
+                   {product.image.startsWith('http') || product.image.startsWith('data:') ? 
+                      <Image src={product.image} alt={product.name} width={48} height={48} className="rounded-md object-cover" data-ai-hint="product thumbnail"/> : 
+                      product.image
+                    }
                   </div>
                 </TableCell>
                 <TableCell className="font-medium">{product.name}</TableCell>
@@ -559,13 +641,13 @@ export default function HybridAdminPanelPage() {
     const [localFormattedConversion, setLocalFormattedConversion] = useState<string | null>(null);
 
     useEffect(() => {
-      if (storeData.analytics.todaySales !== undefined) {
+      if (storeData?.analytics?.todaySales !== undefined) {
         setLocalFormattedSales(storeData.analytics.todaySales.toLocaleString());
       }
-      if (storeData.analytics.conversionRate !== undefined) {
+      if (storeData?.analytics?.conversionRate !== undefined) {
         setLocalFormattedConversion(storeData.analytics.conversionRate.toLocaleString());
       }
-    }, [storeData.analytics.todaySales, storeData.analytics.conversionRate]);
+    }, [storeData?.analytics?.todaySales, storeData?.analytics?.conversionRate]);
 
     return (
       <div className="space-y-6">
@@ -667,7 +749,6 @@ export default function HybridAdminPanelPage() {
 
  return (
     <div className="flex h-screen bg-background text-foreground font-body">
-      {/* Sidebar */}
       <div className="w-20 bg-card border-r border-border flex flex-col items-center py-5 space-y-3 shadow-md">
         <Button
           variant="ghost"
@@ -707,9 +788,7 @@ export default function HybridAdminPanelPage() {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
         <div className="bg-card border-b border-border px-6 py-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -747,10 +826,8 @@ export default function HybridAdminPanelPage() {
           </div>
         </div>
 
-        {/* Content Area */}
         {mode === 'conversational' ? (
           <div className="flex-1 flex overflow-hidden">
-            {/* Conversational Interface */}
             <div className="flex-1 flex flex-col overflow-y-auto p-6">
               <div className="flex-1 space-y-4">
                 {messages.map(message => (
@@ -760,21 +837,47 @@ export default function HybridAdminPanelPage() {
                 <div ref={messagesEndRef} />
               </div>
             
-              {/* Chat Input */}
               <div className="bg-card border-t border-border p-4 sticky bottom-0">
+                 {imageDataUrl && (
+                  <div className="mb-2 p-2 border rounded-lg bg-muted relative max-w-xs">
+                    <Image src={imageDataUrl} alt="Selected preview" width={80} height={80} className="rounded object-contain" data-ai-hint="selected image preview" />
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="absolute top-1 right-1 h-6 w-6 bg-background/50 hover:bg-background/80"
+                      onClick={() => {
+                        setImageDataUrl(null); 
+                        setSelectedImageFile(null);
+                        if(fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
                 <div className="flex items-end space-x-3">
+                  <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageChange} className="hidden" />
+                  <Button 
+                    variant="outline" 
+                    size="icon" 
+                    className="h-[40px] w-[40px] p-0 shrink-0" 
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Upload Image"
+                  >
+                    <ImageUp className="w-4 h-4" />
+                  </Button>
                   <Textarea
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Ask about products, orders, sales, or type a command..."
+                    placeholder={imageDataUrl ? "Add details for the image or send as is..." : "Ask about products, orders, sales, or type a command..."}
                     className="flex-1 p-3 border-border rounded-lg focus:ring-1 focus:ring-primary resize-none shadow-sm text-sm min-h-[40px]"
                     rows={1}
                   />
                   <Button
                     id="send-chat-message-button"
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isTyping}
+                    disabled={(!inputValue.trim() && !imageDataUrl) || isTyping}
                     className="h-[40px] w-[40px] p-0"
                     size="icon"
                   >
@@ -798,7 +901,6 @@ export default function HybridAdminPanelPage() {
               </div>
             </div>
             
-            {/* Stats Sidebar for Conversational Mode */}
             <div className="w-80 bg-card border-l border-border p-6 overflow-y-auto hidden lg:block">
               <div className="mb-6">
                 <h2 className="text-lg font-semibold text-foreground">Performance Hub</h2>
@@ -857,7 +959,6 @@ export default function HybridAdminPanelPage() {
             </div>
           </div>
         ) : (
-          /* Traditional Interface */
           <div className="flex-1 overflow-y-auto p-6 bg-muted/40">
             {renderTraditionalContent()}
           </div>

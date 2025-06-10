@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -43,7 +44,7 @@ const prompt = ai.definePrompt({
   Key Features: {{{keyFeatures}}}
   Tone: {{{tone}}}
 
-  Description:`, // No Handlebars in code samples!
+  Description:`,
 });
 
 const generateProductDescriptionFlow = ai.defineFlow(
