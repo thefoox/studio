@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { 
   Send, Plus, Package, ShoppingCart, Users, BarChart3, Settings, Search, Filter, Edit, Trash2, Eye, 
   TrendingUp, DollarSign, AlertCircle, CheckCircle, Clock, MessageCircle, LayoutGrid, ArrowLeft, 
-  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X, Store, Link as LinkIcon // Added Store, LinkIcon
+  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X, Store, Link as LinkIcon 
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,9 +19,9 @@ import { mockStoreData, StoreData, Product, Order, AnalyticsData, AISuggestion }
 import { suggestNextSteps, SuggestNextStepsInput } from '@/ai/flows/suggest-next-steps';
 import { generateProductDescription, GenerateProductDescriptionInput } from '@/ai/flows/generate-product-description';
 import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow';
-import { queryShopifyAgent, ShopifyAgentInput, ShopifyAgentOutput } from '@/ai/flows/shopify-agent-flow'; // New Shopify Agent
+import { queryShopifyAgent, ShopifyAgentInput, ShopifyAgentOutput } from '@/ai/flows/shopify-agent-flow';
 import { useToast } from "@/hooks/use-toast";
-import { getShopInfo, ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service'; // Import Shopify service & type
+import { getShopInfo, ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service';
 
 type UIMode = 'conversational' | 'traditional';
 type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'reports' | 'settings';
@@ -40,7 +40,7 @@ interface AIMessage {
   text?: string;
   sender: 'ai' | 'user';
   timestamp: Date;
-  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation' | 'shopify_agent_response' | 'shopify_product_card';
+  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation' | 'shopify_agent_response' | 'shopify_product_card' | 'orchestrator_api_call_status';
   data?: any; 
   actions?: { text: string; action: string; variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined }[];
 }
@@ -50,10 +50,23 @@ interface ShopInfoState {
   email: string;
 }
 
+// Hypothetical structure for ProductCreationRequest to orchestrator
+interface OrchestratorProductCreationRequest {
+  metadata: {
+    title: string;
+    description: string;
+    category?: string;
+    tags?: string[];
+  };
+  imageDataUri?: string | null; // Sending data URI, orchestrator might need to be adapted
+  variants?: any[]; // Placeholder
+}
+
+
 const quickActionsConfig = [
   { id: "dashboard", text: "Dashboard", icon: LayoutGrid, action: "dashboard" },
-  { id: "products", text: "Products", icon: Package, action: "products" },
-  { id: "orders", text: "Orders", icon: ShoppingCart, action: "orders" },
+  { id: "products", text: "Products (Mock)", icon: Package, action: "products" },
+  { id: "orders", text: "Orders (Mock)", icon: ShoppingCart, action: "orders" },
   { id: "customers", text: "Customers", icon: Users, action: "customers" },
   { id: "reports", text: "Analytics", icon: BarChart3, action: "reports" },
 ];
@@ -64,13 +77,13 @@ export default function HybridAdminPanelPage() {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 1,
-      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can also upload a product image for analysis or ask about your Shopify store (e.g., 'shopify: list my products').",
+      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can upload a product image for analysis, and I can help you send it to your product orchestrator. You can also ask about your Shopify store (e.g., 'shopify: list my products').",
       sender: 'ai',
       timestamp: new Date(),
       type: 'welcome',
       actions: [
         { text: "Show me my dashboard", action: "show_dashboard"},
-        { text: "List my products", action: "show_products"},
+        { text: "List my (mock) products", action: "show_products"},
         { text: "Any urgent tasks?", action: "show_urgent_tasks"},
         { text: "Ask Shopify: List 3 products", action: "ask_shopify_list_3_products"},
       ]
@@ -80,12 +93,11 @@ export default function HybridAdminPanelPage() {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [selectedView, setSelectedView] = useState<TraditionalView>('dashboard');
-  const [storeData, setStoreData] = useState<StoreData>(mockStoreData);
+  const [storeData, setStoreData] = useState<StoreData>(mockStoreData); // Still using mock for display
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
   
   const [formattedTodaySales, setFormattedTodaySales] = useState<string | null>(null);
   const [formattedConversionRate, setFormattedConversionRate] = useState<string | null>(null);
-
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
@@ -93,10 +105,11 @@ export default function HybridAdminPanelPage() {
 
   const [aiProductContext, setAiProductContext] = useState<AIProductContext>({});
   const [isAwaitingFeatures, setIsAwaitingFeatures] = useState(false);
+  const [isCallingOrchestrator, setIsCallingOrchestrator] = useState(false);
+
 
   const [shopifyStoreInfo, setShopifyStoreInfo] = useState<ShopInfoState | null>(null);
   const [shopifyError, setShopifyError] = useState<string | null>(null);
-
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -157,43 +170,72 @@ export default function HybridAdminPanelPage() {
   }, []);
 
 
-  const handleAddProductFromAIContext = () => {
+  const handleAddProductViaOrchestrator = async () => {
     if (!aiProductContext.productName) {
-      toast({ title: "Missing Product Name", description: "Cannot add product without a name.", variant: "destructive" });
+      toast({ title: "Missing Product Name", description: "Cannot create product without a name.", variant: "destructive" });
       return;
     }
 
-    const newProductId = Math.max(0, ...storeData.products.map(p => p.id)) + 1;
-    const newProduct: Product = {
-      id: newProductId,
-      name: aiProductContext.productName,
-      price: 19.99, // Default price
-      inventory: 10, // Default inventory
-      status: "active",
-      sales: 0,
-      image: aiProductContext.imageDataUrl || "https://placehold.co/100x100.png?text=📦", // Placeholder image
-      sku: `SKU-${Date.now().toString().slice(-5)}`,
-      category: aiProductContext.category || "Uncategorized",
-      description: `${aiProductContext.tags ? `Tags: ${aiProductContext.tags.join(', ')}\n\n` : ''}${aiProductContext.fullDescription || aiProductContext.initialDescription || 'No description yet.'}`,
-    };
-
-    setStoreData(prev => ({ ...prev, products: [...prev.products, newProduct] }));
-    
-    const confirmationMessage: AIMessage = {
-      id: messages.length + Date.now(), 
+    setIsCallingOrchestrator(true);
+    let apiCallMessage: AIMessage = {
+      id: messages.length + Date.now(),
       sender: 'ai',
       timestamp: new Date(),
-      type: 'product_added_confirmation',
-      text: `Great! "${newProduct.name}" has been added to your store with basic details. You can view it in the Products section or ask me to edit it.`,
-      data: newProduct,
-      actions: [
-        { text: "View Products", action: "show_products" },
-        { text: `Edit ${newProduct.name}`, action: `edit_product_${newProduct.id}` }
-      ]
+      type: 'orchestrator_api_call_status',
+      text: `Attempting to create product "${aiProductContext.productName}" via your orchestrator...`,
     };
-    setMessages(prev => [...prev, confirmationMessage]);
-    setAiProductContext({}); 
-    toast({ title: "Product Added!", description: `${newProduct.name} is now in your catalog.` });
+    setMessages(prev => [...prev, apiCallMessage]);
+
+    const payload: OrchestratorProductCreationRequest = {
+      metadata: {
+        title: aiProductContext.productName,
+        description: aiProductContext.fullDescription || aiProductContext.initialDescription || 'No AI description generated.',
+        category: aiProductContext.category,
+        tags: aiProductContext.tags,
+      },
+      imageDataUri: aiProductContext.imageDataUrl, // This might need adjustment based on your orchestrator's capabilities
+      variants: [], // Placeholder: Your orchestrator likely expects a specific structure for variants
+    };
+
+    try {
+      const response = await fetch('/api/orchestrator', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json(); // Assuming orchestrator responds with JSON
+
+      if (response.ok) {
+        toast({ title: "Product Creation Initiated!", description: `"${aiProductContext.productName}" sent to orchestrator. Response: ${result.message || 'Success!'}` });
+        apiCallMessage = {
+          id: messages.length + Date.now() + 1,
+          sender: 'ai',
+          timestamp: new Date(),
+          type: 'product_added_confirmation', // Keeping type for potential specific rendering
+          text: `Successfully sent "${aiProductContext.productName}" to your product orchestrator! 🎉\nServer response: ${JSON.stringify(result)}.\nNote: Product lists here still show mock data.`,
+          data: result, // Store API response
+        };
+      } else {
+        throw new Error(result.error || result.message || `Server responded with ${response.status}`);
+      }
+    } catch (error: any) {
+      console.error("Error calling orchestrator API:", error);
+      toast({ title: "Orchestrator Error", description: `Failed to create product: ${error.message}`, variant: "destructive" });
+      apiCallMessage = {
+        id: messages.length + Date.now() + 1,
+        sender: 'ai',
+        timestamp: new Date(),
+        type: 'error',
+        text: `Sorry, I encountered an error when trying to create "${aiProductContext.productName}" via the orchestrator: ${error.message}. Please check the console and your orchestrator logs.`,
+      };
+    } finally {
+      setIsCallingOrchestrator(false);
+      setMessages(prev => [...prev, apiCallMessage]);
+      setAiProductContext({}); // Clear context after attempt
+    }
   };
 
   const processShopifyQuery = async (queryText: string): Promise<Partial<AIMessage>> => {
@@ -202,21 +244,11 @@ export default function HybridAdminPanelPage() {
       const agentInput: ShopifyAgentInput = { query: queryText };
       const agentResult = await queryShopifyAgent(agentInput);
       setIsTyping(false);
-
-      // Attempt to parse product data if present in the response for card display
-      // This is a simple heuristic; a more robust solution would involve structured data from the agent.
       let productDataForCard: ServiceShopifyProduct | null = null;
-      if (agentResult.response.includes("Product ID:") && agentResult.response.includes("Name:")) {
-        // Basic check for product details in the response
-        // This part would need to be more robust if we want to reliably extract structured data
-        // For now, we'll just pass the text response.
-      }
-
-
       return {
         type: 'shopify_agent_response',
         text: agentResult.response,
-        data: agentResult.isError ? { error: agentResult.errorMessage } : { productDataForCard }, // Pass data for potential card rendering
+        data: agentResult.isError ? { error: agentResult.errorMessage } : { productDataForCard },
       };
     } catch (error: any) {
       console.error("Error processing Shopify query with agent:", error);
@@ -249,7 +281,7 @@ Initial Description: "${currentAiProductContext.initialDescription || 'N/A'}"
 
 What's next?`,
             actions: [
-                { text: `Add "${input}" to Store`, action: "add_product_from_context", variant: "default" },
+                { text: `Create "${input}" via Orchestrator`, action: "add_product_via_orchestrator", variant: "default" },
                 { text: `Generate Full Description`, action: "request_features_for_description_context" },
             ]
         };
@@ -271,10 +303,10 @@ What's next?`,
             setAiProductContext(prev => ({...prev, fullDescription: descriptionResult.description}));
             return {
                 type: 'product_description_result',
-                text: `Generated full description for "${currentAiProductContext.productName}":\n\n${descriptionResult.description}\n\nReady to add it to the store?`,
+                text: `Generated full description for "${currentAiProductContext.productName}":\n\n${descriptionResult.description}\n\nReady to send it to your orchestrator?`,
                 data: { productName: currentAiProductContext.productName, description: descriptionResult.description, context: currentAiProductContext },
                 actions: [
-                     { text: `Add "${currentAiProductContext.productName}" to Store`, action: "add_product_from_context", variant: "default" },
+                     { text: `Create "${currentAiProductContext.productName}" via Orchestrator`, action: "add_product_via_orchestrator", variant: "default" },
                      { text: "Regenerate (new features?)", action: "request_features_for_description_context" }
                 ]
             };
@@ -282,14 +314,14 @@ What's next?`,
             console.error("Error generating product description from context:", error);
             setIsTyping(false);
             setIsAwaitingFeatures(false);
-            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or add manually." };
+            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or proceed manually." };
         }
     }
     
     if (command.includes('dashboard') || command.includes('overview') || command.includes('stats')) {
       return {
         type: 'analytics_dashboard',
-        text: "Here's your current performance overview:",
+        text: "Here's your current performance overview (from mock data):",
         data: storeData.analytics,
         actions: [
           { text: "View Detailed Report", action: "view_detailed_report", variant: "outline" },
@@ -301,23 +333,22 @@ What's next?`,
     if (command.includes('product') && (command.includes('list') || command.includes('show') || command.includes('all'))) {
       return {
         type: 'product_list',
-        text: "Here's your (mock) product catalog:", // Clarify it's mock data
+        text: "Here's your (mock) product catalog:", 
         data: storeData.products,
         actions: [
-          { text: "Add New Product (Manual)", action: "add_product_interactive", variant: "outline" },
-          { text: "Upload Image to Add", action: "trigger_image_upload_for_product", variant: "default"},
+          { text: "Add New Product (via Orchestrator)", action: "add_product_interactive", variant: "default" },
           { text: "Ask Shopify: List products", action: "ask_shopify_list_products", variant: "secondary"}
         ]
       };
     }
     
-    if (((command.includes('add') || command.includes('create')) && command.includes('product')) || command === 'manual_product_form') {
+    if (((command.includes('add') || command.includes('create')) && command.includes('product')) || command === 'add_product_interactive') {
       return {
         type: 'add_product_form',
-        text: "Let's add a new product. Please provide the product name, key features (comma separated), and desired tone for the description (e.g., 'SuperWidget;eco-friendly,long-lasting;professional'). You can also upload an image first for AI assistance.",
+        text: "Let's prepare a product for your orchestrator. Start by uploading an image or providing details for AI description generation. \nFormat for AI description: 'ProductName; feature1, feature2; tone'",
         actions: [
-          { text: "Use AI for Description", action: "ai_product_description_prompt", variant: "default" },
-          { text: "Upload Image First", action: "trigger_image_upload_for_product", variant: "outline" },
+          { text: "Use AI for Description", action: "ai_product_description_prompt", variant: "outline" },
+          { text: "Upload Image First", action: "trigger_image_upload_for_product", variant: "default" },
         ]
       };
     }
@@ -329,26 +360,26 @@ What's next?`,
             setIsTyping(true);
             const descriptionResult = await generateProductDescription({ productName, keyFeatures, tone });
             setIsTyping(false);
-            setAiProductContext(prev => ({ ...prev, productName, fullDescription: descriptionResult.description }));
+            setAiProductContext(prev => ({ ...prev, productName, fullDescription: descriptionResult.description })); // No image context here
             return {
                 type: 'product_description_result',
-                text: `Generated description for "${productName}":\n\n${descriptionResult.description}\n\nWhat's next? You can add this product to the store (it will use default price/SKU).`,
+                text: `Generated description for "${productName}":\n\n${descriptionResult.description}\n\nWhat's next?`,
                 data: { productName, description: descriptionResult.description },
                 actions: [
-                    { text: `Add "${productName}" to Store`, action: "add_product_from_context" }
+                    { text: `Create "${productName}" via Orchestrator`, action: "add_product_via_orchestrator" }
                 ]
             };
         } catch (error) {
             console.error("Error generating product description (manual):", error);
             setIsTyping(false);
-            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or add manually." };
+            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again." };
         }
     }
 
     if (command.includes('order') || command.includes('sale')) {
       return {
         type: 'orders_list',
-        text: "Here are your recent (mock) orders:", // Clarify mock
+        text: "Here are your recent (mock) orders:", 
         data: storeData.orders,
         actions: [
           { text: "Filter Orders", action: "filter_orders", variant: "outline" },
@@ -382,7 +413,7 @@ What's next?`,
     
     return {
       type: 'help',
-      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show products (mock data)\n• Add/create product (you can upload an image too!)\n• Show orders/sales (mock data)\n• Check urgent tasks (mock data)\n• Query Shopify: 'shopify: [your question]'\n\nHow can I assist you?",
+      text: "I'm not sure how to help with that. You can ask me to:\n\n• Show dashboard/overview/stats\n• List/show (mock) products\n• Add/create product (via orchestrator, you can upload an image!)\n• Show (mock) orders/sales\n• Check urgent (mock) tasks\n• Query Shopify: 'shopify: [your question]'\n\nHow can I assist you?",
        actions: [
         { text: "Show Dashboard", action: "show_dashboard"},
         { text: "List Mock Products", action: "show_products"},
@@ -480,8 +511,8 @@ What is the product name for this item?`,
   };
 
   const handleQuickAction = (action: string) => {
-    if (action === "add_product_from_context") {
-        handleAddProductFromAIContext();
+    if (action === "add_product_via_orchestrator") {
+        handleAddProductViaOrchestrator();
         return;
     }
     if (action === "request_features_for_description_context") {
@@ -500,7 +531,6 @@ What is the product name for this item?`,
         fileInputRef.current?.click();
         return;
     }
-    // Handle new Shopify quick actions
     if (action === "ask_shopify_list_products") {
         setInputValue("shopify: list products");
         setTimeout(() => document.getElementById('send-chat-message-button')?.click(), 0);
@@ -512,8 +542,8 @@ What is the product name for this item?`,
         return;
     }
      if (action === "ask_shopify_list_orders") {
-        setInputValue("shopify: list orders"); // Example, tool not yet implemented
-        toast({ title: "Shopify Orders", description: "Order tools are not yet implemented.", variant: "default" });
+        setInputValue("shopify: list orders"); 
+        toast({ title: "Shopify Orders", description: "Shopify order tools are not yet fully implemented in this agent.", variant: "default" });
         // setTimeout(() => document.getElementById('send-chat-message-button')?.click(), 0);
         return;
     }
@@ -524,19 +554,21 @@ What is the product name for this item?`,
       if (action.startsWith("show_") || action.startsWith("view_") || action.startsWith("add_") || action.startsWith("filter_") || action.startsWith("process_") || action.startsWith("edit_product_")) {
         actionText = action.replace(/_/g, ' ');
          if (action.startsWith("edit_product_")) {
-            toast({ title: "Edit Product", description: `Navigating to edit ${actionText.substring(13)} (mock action)`});
-            setInputValue(`Show product ${actionText.substring(13)} details`); 
+            toast({ title: "Edit Product", description: `Functionality to edit products created via orchestrator is not yet implemented here.`});
+            // setInputValue(`Show product ${actionText.substring(13)} details`); 
+         } else if (action === "add_product_interactive") {
+            actionText = "add product via orchestrator"; // Specific text for this button
          }
       } else {
          switch (action) {
           case 'dashboard': actionText = 'Show dashboard'; break;
-          case 'products': actionText = 'List products'; break;
-          case 'orders': actionText = 'Show orders'; break;
+          case 'products': actionText = 'List mock products'; break;
+          case 'orders': actionText = 'Show mock orders'; break;
           case 'ai_product_description_prompt': 
             setInputValue(''); 
             const promptMessage: AIMessage = {
                 id: messages.length + Date.now(),
-                text: "Okay, let's use AI. Provide product name, key features (comma-separated), and tone. Format: 'ProductName; feature1, feature2; tone'",
+                text: "Okay, let's use AI for description. Provide product name, key features (comma-separated), and tone. Format: 'ProductName; feature1, feature2; tone'",
                 sender: 'ai',
                 timestamp: new Date(),
                 type: 'add_product_form' 
@@ -610,7 +642,7 @@ What is the product name for this item?`,
             </Button>
          )}
          <Button size="sm" variant={isShopifyProduct ? "secondary" : "outline"} onClick={() => toast({ title: `Product Action`, description: `Action for ${isShopifyProduct ? (product as ServiceShopifyProduct).title : (product as Product).name}`})}>
-            {isShopifyProduct ? 'Shopify Actions' : 'Edit'}
+            {isShopifyProduct ? 'Shopify Actions' : 'Edit (Mock Data)'}
          </Button>
       </CardFooter>
     </Card>
@@ -638,7 +670,7 @@ What is the product name for this item?`,
         </div>
       </CardContent>
        <CardFooter className="p-4">
-         <Button size="sm" variant="outline" onClick={() => toast({ title: "View Order", description: `Viewing order ${order.id}`})}>View Details</Button>
+         <Button size="sm" variant="outline" onClick={() => toast({ title: "View Order", description: `Viewing order ${order.id} (Mock Data)`})}>View Details</Button>
       </CardFooter>
     </Card>
   );
@@ -702,11 +734,12 @@ What is the product name for this item?`,
                 </div>
             )}
             
-            {message.type === 'product_added_confirmation' && message.data && (
+            {/* No longer showing ProductCardChat for product_added_confirmation as it's not added to local mock data */}
+            {/* {message.type === 'product_added_confirmation' && message.data && (
                 <div className="mt-3">
-                    <ProductCardChat product={message.data as Product} />
+                    <ProductCardChat product={message.data as Product} /> 
                 </div>
-            )}
+            )} */}
 
             {message.type === 'shopify_agent_response' && message.data?.productDataForCard && (
                  <div className="mt-3">
@@ -745,6 +778,7 @@ What is the product name for this item?`,
                     variant={action.variant || (isAI ? "outline" : "secondary")}
                     onClick={() => handleQuickAction(action.action)}
                     className={isAI ? "bg-background hover:bg-muted" : ""}
+                    disabled={isCallingOrchestrator && action.action === "add_product_via_orchestrator"}
                   >
                     {action.text}
                   </Button>
@@ -784,14 +818,14 @@ What is the product name for this item?`,
         <div className="flex justify-between items-center">
           <div>
             <CardTitle className="text-2xl">Product Catalog (Mock Data)</CardTitle>
-            <CardDescription>Manage your product inventory and listings. For Shopify products, use the chat.</CardDescription>
+            <CardDescription>Manage your product inventory and listings. For Shopify products, use the chat. Products created via Orchestrator are not shown here yet.</CardDescription>
           </div>
           <div className="flex space-x-2">
             <Button variant="outline"><Filter className="w-4 h-4 mr-2" />Filter</Button>
             <Button onClick={() => {
                 setMode('conversational');
                 handleQuickAction('trigger_image_upload_for_product');
-            }}><Plus className="w-4 h-4 mr-2" />Add Product (AI)</Button>
+            }}><Plus className="w-4 h-4 mr-2" />Add Product (AI → Orchestrator)</Button>
           </div>
         </div>
       </CardHeader>
@@ -1100,7 +1134,7 @@ What is the product name for this item?`,
                 </h1>
                 <p className="text-xs text-muted-foreground">
                   {mode === 'conversational' 
-                    ? 'Intelligent store management through conversation'
+                    ? 'Intelligent store management with Orchestrator & Shopify integration'
                     : `Manage your ${selectedView}`
                   }
                 </p>
@@ -1127,6 +1161,16 @@ What is the product name for this item?`,
                   <MessageBubble key={message.id} message={message} />
                 ))}
                 {isTyping && <TypingIndicator />}
+                {isCallingOrchestrator && !messages.some(m => m.type === 'orchestrator_api_call_status' && m.sender === 'ai' && m.text?.includes('Attempting to create product')) && (
+                  <MessageBubble 
+                    message={{
+                      id: Date.now(), 
+                      sender:'ai', 
+                      text: 'Sending product to orchestrator...', 
+                      timestamp: new Date(),
+                      type: 'orchestrator_api_call_status'
+                    }}/>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             
@@ -1156,6 +1200,7 @@ What is the product name for this item?`,
                     className="h-[40px] w-[40px] p-0 shrink-0" 
                     onClick={() => fileInputRef.current?.click()}
                     title="Upload Image"
+                    disabled={isCallingOrchestrator || isTyping}
                   >
                     <ImageUp className="w-4 h-4" />
                   </Button>
@@ -1166,11 +1211,12 @@ What is the product name for this item?`,
                     placeholder={imageDataUrl ? "Add details for the image or send as is..." : isAwaitingFeatures ? `Enter features/keywords for "${aiProductContext.productName}"...` : "Ask about products, orders, or type 'shopify: [your query]'..."}
                     className="flex-1 p-3 border-border rounded-lg focus:ring-1 focus:ring-primary resize-none shadow-sm text-sm min-h-[40px]"
                     rows={1}
+                    disabled={isCallingOrchestrator || isTyping}
                   />
                   <Button
                     id="send-chat-message-button"
                     onClick={handleSendMessage}
-                    disabled={(!inputValue.trim() && !imageDataUrl) || isTyping}
+                    disabled={(!inputValue.trim() && !imageDataUrl) || isTyping || isCallingOrchestrator}
                     className="h-[40px] w-[40px] p-0"
                     size="icon"
                   >
@@ -1179,13 +1225,14 @@ What is the product name for this item?`,
                 </div>
                 
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {['Show dashboard', 'List products', 'shopify: list 2 products'].map(suggestion => (
+                  {['Show dashboard', 'List (mock) products', 'shopify: list 2 products'].map(suggestion => (
                     <Button
                       key={suggestion}
                       size="sm"
                       variant="outline"
                       onClick={() => {setInputValue(suggestion); setTimeout(()=>document.getElementById('send-chat-message-button')?.click(),0);}}
                       className="text-xs h-7"
+                      disabled={isCallingOrchestrator || isTyping}
                     >
                       {suggestion}
                     </Button>
@@ -1197,7 +1244,7 @@ What is the product name for this item?`,
             <div className="w-80 bg-card border-l border-border p-6 overflow-y-auto hidden lg:block">
               <div className="mb-6">
                 <h2 className="text-lg font-semibold text-foreground">Performance Hub</h2>
-                <p className="text-xs text-muted-foreground">Real-time business insights</p>
+                <p className="text-xs text-muted-foreground">Real-time business insights (mock data)</p>
               </div>
               
               <div className="space-y-4">
@@ -1242,6 +1289,7 @@ What is the product name for this item?`,
                       size="sm"
                       onClick={() => {setInputValue(suggestion.step); setTimeout(()=>document.getElementById('send-chat-message-button')?.click(),0);}}
                       className="w-full text-left justify-start h-auto py-2 px-3 text-xs leading-tight"
+                      disabled={isCallingOrchestrator || isTyping}
                     >
                       <Sparkles className="w-3 h-3 mr-2 text-primary shrink-0" /> {suggestion.step}
                     </Button>
