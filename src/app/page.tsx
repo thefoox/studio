@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { 
   Send, Plus, Package, ShoppingCart, Users, BarChart3, Settings, Search, Filter, Edit, Trash2, Eye, 
   TrendingUp, DollarSign, AlertCircle, CheckCircle, Clock, MessageCircle, LayoutGrid, ArrowLeft, 
-  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X // Added X
+  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X, Store // Added Store
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { suggestNextSteps, SuggestNextStepsInput } from '@/ai/flows/suggest-next
 import { generateProductDescription, GenerateProductDescriptionInput } from '@/ai/flows/generate-product-description';
 import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow';
 import { useToast } from "@/hooks/use-toast";
+import { getShopInfo } from '@/services/shopify-service'; // Import Shopify service
 
 type UIMode = 'conversational' | 'traditional';
 type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'reports' | 'settings';
@@ -41,6 +42,11 @@ interface AIMessage {
   type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation';
   data?: any; 
   actions?: { text: string; action: string; variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined }[];
+}
+
+interface ShopInfoState {
+  name: string;
+  email: string;
 }
 
 const quickActionsConfig = [
@@ -83,6 +89,9 @@ export default function HybridAdminPanelPage() {
   const [aiProductContext, setAiProductContext] = useState<AIProductContext>({});
   const [isAwaitingFeatures, setIsAwaitingFeatures] = useState(false);
 
+  const [shopifyStoreInfo, setShopifyStoreInfo] = useState<ShopInfoState | null>(null);
+  const [shopifyError, setShopifyError] = useState<string | null>(null);
+
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -120,6 +129,25 @@ export default function HybridAdminPanelPage() {
     }
   }, [storeData?.analytics?.todaySales]);
 
+  useEffect(() => {
+    async function fetchAndSetShopInfo() {
+      try {
+        setShopifyError(null);
+        const info = await getShopInfo();
+        if (info) {
+          setShopifyStoreInfo(info);
+        } else {
+          setShopifyError("Could not retrieve Shopify store information. Ensure .env variables are correct.");
+        }
+      } catch (error: any) {
+        console.error("Error fetching Shopify store info in component:", error);
+        setShopifyError(`Failed to connect to Shopify: ${error.message || 'Unknown error'}. Check .env variables and API access.`);
+        setShopifyStoreInfo(null);
+      }
+    }
+    fetchAndSetShopInfo();
+  }, []);
+
 
   const handleAddProductFromAIContext = () => {
     if (!aiProductContext.productName) {
@@ -144,7 +172,7 @@ export default function HybridAdminPanelPage() {
     setStoreData(prev => ({ ...prev, products: [...prev.products, newProduct] }));
     
     const confirmationMessage: AIMessage = {
-      id: messages.length + Date.now(), // Ensure unique ID
+      id: messages.length + Date.now(), 
       sender: 'ai',
       timestamp: new Date(),
       type: 'product_added_confirmation',
@@ -156,7 +184,7 @@ export default function HybridAdminPanelPage() {
       ]
     };
     setMessages(prev => [...prev, confirmationMessage]);
-    setAiProductContext({}); // Clear context
+    setAiProductContext({}); 
     toast({ title: "Product Added!", description: `${newProduct.name} is now in your catalog.` });
   };
 
@@ -188,8 +216,8 @@ What's next?`,
             setIsTyping(true);
             const genInput: GenerateProductDescriptionInput = {
                 productName: currentAiProductContext.productName,
-                keyFeatures: input, // User input is features/keywords
-                tone: "engaging", // Default tone
+                keyFeatures: input, 
+                tone: "engaging", 
                 targetKeywords: input.split(',').map(kw => kw.trim()).filter(kw => kw.length > 0),
                 existingDescription: currentAiProductContext.initialDescription
             };
@@ -248,7 +276,6 @@ What's next?`,
       };
     }
     
-    // This regex targets the "productName;keyFeatures;tone" format for manual description generation
     const manualDescMatch = input.match(/([\w\s\-\_'\"]+)\s*;\s*([\w\s\-\_,'\"\(\)]+)\s*;\s*([\w\s]+)/);
     if (manualDescMatch && (lastAiMessage?.type === 'add_product_form' || lastAiMessage?.type === 'request_features_for_description')) {
         const [, productName, keyFeatures, tone] = manualDescMatch.map(p => p.trim());
@@ -380,10 +407,6 @@ What is the product name for this item?`,
         };
         setMessages(prev => [...prev, aiResponseMessage!]);
         
-        // If there was also text with the image, process it as a follow-up command
-        // For now, we assume text sent WITH an image is not a separate command.
-        // The primary path after image upload is for the AI to ask for product name.
-
       } catch (error) {
         console.error("Error analyzing product image:", error);
         aiResponseMessage = {
@@ -437,9 +460,7 @@ What is the product name for this item?`,
         actionText = action.replace(/_/g, ' ');
          if (action.startsWith("edit_product_")) {
             toast({ title: "Edit Product", description: `Navigating to edit ${actionText.substring(13)} (mock action)`});
-            // In a real app, you'd navigate or open a modal.
-            // For now, we'll just acknowledge.
-            setInputValue(`Show product ${actionText.substring(13)} details`); // Example follow-up
+            setInputValue(`Show product ${actionText.substring(13)} details`); 
          }
       } else {
          switch (action) {
@@ -447,13 +468,13 @@ What is the product name for this item?`,
           case 'products': actionText = 'List products'; break;
           case 'orders': actionText = 'Show orders'; break;
           case 'ai_product_description_prompt': 
-            setInputValue(''); // Clear input, AI will prompt
+            setInputValue(''); 
             const promptMessage: AIMessage = {
                 id: messages.length + Date.now(),
                 text: "Okay, let's use AI. Provide product name, key features (comma-separated), and tone. Format: 'ProductName; feature1, feature2; tone'",
                 sender: 'ai',
                 timestamp: new Date(),
-                type: 'add_product_form' // Re-use form type to indicate context
+                type: 'add_product_form' 
             };
             setMessages(prev => [...prev, promptMessage]);
             return;
@@ -462,7 +483,6 @@ What is the product name for this item?`,
       }
       setInputValue(actionText);
       setTimeout(() => {
-        // Check if element exists before clicking
         const sendButton = document.getElementById('send-chat-message-button');
         if (sendButton) {
             sendButton.click();
@@ -555,7 +575,7 @@ What is the product name for this item?`,
       if (analytics?.conversionRate !== undefined) {
         setFormattedConversion(analytics.conversionRate.toLocaleString());
       }
-    }, [analytics?.todaySales, analytics?.conversionRate]);
+    }, [analytics]);
     
     return (
       <Card className="mb-3 shadow-sm">
@@ -807,10 +827,38 @@ What is the product name for this item?`,
       if (storeData?.analytics?.conversionRate !== undefined) {
         setLocalFormattedConversion(storeData.analytics.conversionRate.toLocaleString());
       }
-    }, [storeData?.analytics?.todaySales, storeData?.analytics?.conversionRate]);
+    }, [storeData.analytics]);
 
     return (
       <div className="space-y-6">
+        <Card className="shadow-lg hover:shadow-xl transition-shadow">
+          <CardHeader>
+            <div className="flex items-center space-x-2">
+              <Store className="h-5 w-5 text-primary" />
+              <CardTitle>Shopify Store Status</CardTitle>
+            </div>
+            <CardDescription>Connection details for your linked Shopify store.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {shopifyStoreInfo && (
+              <div className="space-y-2 text-sm">
+                <p><strong>Store Name:</strong> {shopifyStoreInfo.name}</p>
+                <p><strong>Store Email:</strong> {shopifyStoreInfo.email}</p>
+                <p className="text-green-600 flex items-center"><CheckCircle className="w-4 h-4 mr-2"/>Successfully connected to Shopify.</p>
+              </div>
+            )}
+            {shopifyError && (
+              <div className="space-y-2 text-sm">
+                <p className="text-destructive flex items-center"><AlertCircle className="w-4 h-4 mr-2"/><strong>Connection Error:</strong> {shopifyError}</p>
+                <p className="text-muted-foreground">Please ensure your `SHOPIFY_STORE_DOMAIN` and `SHOPIFY_ADMIN_ACCESS_TOKEN` are correctly set in the `.env` file and your app has the necessary permissions.</p>
+              </div>
+            )}
+            {!shopifyStoreInfo && !shopifyError && (
+              <p className="text-sm text-muted-foreground">Attempting to connect to Shopify...</p>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -976,8 +1024,8 @@ What is the product name for this item?`,
             
             <div className="flex items-center space-x-4">
                <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-                <div className={`w-2 h-2 rounded-full ${mode === 'conversational' ? 'bg-primary animate-pulse' : 'bg-accent'}`}></div>
-                <span>{mode === 'conversational' ? 'AI Active' : 'Traditional Mode'}</span>
+                <div className={`w-2 h-2 rounded-full ${mode === 'conversational' ? 'bg-primary animate-pulse' : (shopifyStoreInfo ? 'bg-green-500' : shopifyError ? 'bg-red-500' : 'bg-yellow-500')}`}></div>
+                <span>{mode === 'conversational' ? 'AI Active' : (shopifyStoreInfo ? 'Shopify Connected' : shopifyError ? 'Shopify Error' : 'Shopify Connecting...')}</span>
               </div>
               <Input type="search" placeholder="Search everything..." className="w-64 h-9 rounded-full text-xs bg-muted border-none focus-visible:ring-primary" />
               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground"><Bell className="w-5 h-5" /></Button>

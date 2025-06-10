@@ -1,0 +1,12 @@
+{
+    "IDX.aI.enableInlineCompletion": true,
+    "IDX.aI.enableCodebaseIndexing": true,
+    "mcpServers": {
+        "shopify-dev-mcp": {
+            "command": "cmd",
+            "args": [
+                "/k", "npx", "-y", "@shopify/dev-mcp@latest"
+            ]
+        }
+    }
+}
