@@ -39,6 +39,14 @@ export interface ShopifyProduct {
     minVariantPrice: { amount: string; currencyCode: string };
     maxVariantPrice: { amount: string; currencyCode: string };
   };
+  // For listShopifyProducts, if featuredImage is directly on node
+  featuredImage?: {
+    url: string;
+  } | null;
+   // For getShopifyProductById, if images is used
+  images?: {
+    edges: Array<{ node: { url: string } }>;
+  } | null;
 }
 
 
@@ -51,14 +59,14 @@ function getShopifyClient(): ShopifyApiClient {
     return shopifyClientInstance;
   }
 
-  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const shopDomain = process.env.SHOPIFY_SHOP_DOMAIN;
   const accessToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-  if (!storeDomain) {
-    const errorMessage = `Shopify client initialization failed: SHOPIFY_STORE_DOMAIN environment variable is not set or is undefined. 
+  if (!shopDomain) {
+    const errorMessage = `Shopify client initialization failed: SHOPIFY_SHOP_DOMAIN environment variable is not set or is undefined. 
     Attempted to load .env from: '${envPath}'. 
-    Current value found for SHOPIFY_STORE_DOMAIN: '${storeDomain}'. 
-    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_STORE_DOMAIN entry (e.g., SHOPIFY_STORE_DOMAIN=your-store.myshopify.com) and that you've restarted your development server.`;
+    Current value found for SHOPIFY_SHOP_DOMAIN: '${shopDomain}'. 
+    Please check your .env file in the project root and ensure it contains a valid SHOPIFY_SHOP_DOMAIN entry (e.g., SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com) and that you've restarted your development server.`;
     console.error(errorMessage);
     throw new Error(errorMessage);
   }
@@ -72,12 +80,12 @@ function getShopifyClient(): ShopifyApiClient {
 
   try {
     shopifyClientInstance = createAdminApiClient({
-      storeDomain: storeDomain,
+      storeDomain: shopDomain, // Use the correctly named variable here
       apiVersion: '2024-07', // Use a recent, valid API version
       accessToken: accessToken,
     });
   } catch (error: any) {
-      const initErrorMessage = `Shopify client initialization failed during createAdminApiClient (for domain: '${storeDomain}'). Error: ${error.message || 'Unknown error during client creation.'}. 
+      const initErrorMessage = `Shopify client initialization failed during createAdminApiClient (for domain: '${shopDomain}'). Error: ${error.message || 'Unknown error during client creation.'}. 
       Attempted to load .env from '${envPath}'.`;
       console.error(initErrorMessage);
       throw new Error(initErrorMessage);
@@ -121,7 +129,7 @@ export async function getShopInfo(): Promise<ShopInfo | null> {
         // Add more specific hints based on error type, if not an initialization error
         if (!error.message.toLowerCase().includes('initialization failed')) {
             if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND') || error.message.includes('EAI_AGAIN')) {
-                errorMessage += ` (This could be due to an incorrect SHOPIFY_STORE_DOMAIN: '${process.env.SHOPIFY_STORE_DOMAIN}' or network issues.)`;
+                errorMessage += ` (This could be due to an incorrect SHOPIFY_SHOP_DOMAIN: '${process.env.SHOPIFY_SHOP_DOMAIN}' or network issues.)`;
             } else if (error.message.toLowerCase().includes('unauthorized') || error.message.toLowerCase().includes('forbidden') || (error.message.includes('401') || error.message.includes('403'))) {
                 errorMessage += ` (This could be due to an invalid SHOPIFY_ADMIN_ACCESS_TOKEN or insufficient permissions.)`;
             }
@@ -217,7 +225,7 @@ export async function getShopifyProductById(productId: string): Promise<ShopifyP
     }
   `;
   try {
-    const response = await client.request<{ product: ShopifyProduct & { images?: { edges: Array<{ node: { url: string } }> }} }>(query, { variables: { id: formattedProductId } });
+    const response = await client.request<{ product: ShopifyProduct }>(query, { variables: { id: formattedProductId } });
     if (response.data?.product) {
       const productData = response.data.product;
       return {
@@ -235,4 +243,3 @@ export async function getShopifyProductById(productId: string): Promise<ShopifyP
     throw error; 
   }
 }
-
