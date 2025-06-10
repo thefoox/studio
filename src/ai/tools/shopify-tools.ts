@@ -1,5 +1,4 @@
 
-'use server';
 /**
  * @fileOverview Shopify Admin API tools for Genkit.
  *
