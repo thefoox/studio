@@ -2,11 +2,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Image from 'next/image'; // Added for image previews
+import Image from 'next/image';
 import { 
   Send, Plus, Package, ShoppingCart, Users, BarChart3, Settings, Search, Filter, Edit, Trash2, Eye, 
   TrendingUp, DollarSign, AlertCircle, CheckCircle, Clock, MessageCircle, LayoutGrid, ArrowLeft, 
-  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp // Added ImageUp
+  Download, Bell, BotMessageSquare, User, Palette, BrainCircuit, Sparkles, ImageUp, X // Added X
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,19 +18,28 @@ import { Progress } from "@/components/ui/progress";
 import { mockStoreData, StoreData, Product, Order, AnalyticsData, AISuggestion } from '@/lib/mock-data';
 import { suggestNextSteps, SuggestNextStepsInput } from '@/ai/flows/suggest-next-steps';
 import { generateProductDescription, GenerateProductDescriptionInput } from '@/ai/flows/generate-product-description';
-import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow'; // New flow
+import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow';
 import { useToast } from "@/hooks/use-toast";
 
 type UIMode = 'conversational' | 'traditional';
 type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'reports' | 'settings';
 
+interface AIProductContext {
+  imageDataUrl?: string | null;
+  category?: string;
+  tags?: string[];
+  initialDescription?: string;
+  productName?: string;
+  fullDescription?: string;
+}
+
 interface AIMessage {
   id: number;
-  text?: string; // Made optional for image-only messages
+  text?: string;
   sender: 'ai' | 'user';
   timestamp: Date;
-  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload';
-  data?: any; // Can hold product data, analytics data, image data, or analysis results
+  type?: 'welcome' | 'product_list' | 'add_product_form' | 'orders_list' | 'analytics_dashboard' | 'help' | 'product_description_result' | 'error' | 'image_analysis_result' | 'user_image_upload' | 'confirm_product_name' | 'request_features_for_description' | 'product_added_confirmation';
+  data?: any; 
   actions?: { text: string; action: string; variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined }[];
 }
 
@@ -71,6 +80,10 @@ export default function HybridAdminPanelPage() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [aiProductContext, setAiProductContext] = useState<AIProductContext>({});
+  const [isAwaitingFeatures, setIsAwaitingFeatures] = useState(false);
+
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -96,7 +109,7 @@ export default function HybridAdminPanelPage() {
         console.error("Failed to fetch AI suggestions:", error);
       }
     };
-    if (storeData?.analytics?.todaySales !== undefined) { // Check if storeData and analytics are defined
+    if (storeData?.analytics?.todaySales !== undefined) {
         fetchSuggestions();
     }
   }, [storeData?.analytics]);
@@ -108,8 +121,97 @@ export default function HybridAdminPanelPage() {
   }, [storeData?.analytics?.todaySales]);
 
 
-  const processCommand = async (input: string): Promise<Partial<AIMessage>> => {
+  const handleAddProductFromAIContext = () => {
+    if (!aiProductContext.productName) {
+      toast({ title: "Missing Product Name", description: "Cannot add product without a name.", variant: "destructive" });
+      return;
+    }
+
+    const newProductId = Math.max(0, ...storeData.products.map(p => p.id)) + 1;
+    const newProduct: Product = {
+      id: newProductId,
+      name: aiProductContext.productName,
+      price: 19.99, // Default price
+      inventory: 10, // Default inventory
+      status: "active",
+      sales: 0,
+      image: aiProductContext.imageDataUrl || "📦",
+      sku: `SKU-${Date.now().toString().slice(-5)}`,
+      category: aiProductContext.category || "Uncategorized",
+      description: `${aiProductContext.tags ? `Tags: ${aiProductContext.tags.join(', ')}\n\n` : ''}${aiProductContext.fullDescription || aiProductContext.initialDescription || 'No description yet.'}`,
+    };
+
+    setStoreData(prev => ({ ...prev, products: [...prev.products, newProduct] }));
+    
+    const confirmationMessage: AIMessage = {
+      id: messages.length + Date.now(), // Ensure unique ID
+      sender: 'ai',
+      timestamp: new Date(),
+      type: 'product_added_confirmation',
+      text: `Great! "${newProduct.name}" has been added to your store with basic details. You can view it in the Products section or ask me to edit it.`,
+      data: newProduct,
+      actions: [
+        { text: "View Products", action: "show_products" },
+        { text: `Edit ${newProduct.name}`, action: `edit_product_${newProduct.id}` }
+      ]
+    };
+    setMessages(prev => [...prev, confirmationMessage]);
+    setAiProductContext({}); // Clear context
+    toast({ title: "Product Added!", description: `${newProduct.name} is now in your catalog.` });
+  };
+
+
+  const processCommand = async (input: string, currentMessages: AIMessage[], currentAiProductContext: AIProductContext): Promise<Partial<AIMessage>> => {
     const command = input.toLowerCase().trim();
+    const lastAiMessage = currentMessages.filter(m => m.sender === 'ai').pop();
+
+    if (lastAiMessage?.type === 'image_analysis_result' && currentAiProductContext.imageDataUrl) {
+        setAiProductContext(prev => ({...prev, productName: input}));
+        return {
+            type: 'confirm_product_name',
+            text: `OK, product name set to "${input}". Based on the image, I found:
+Category: ${currentAiProductContext.category || 'N/A'}
+Tags: ${(currentAiProductContext.tags || []).join(', ')}
+Initial Description: "${currentAiProductContext.initialDescription || 'N/A'}"
+
+What's next?`,
+            actions: [
+                { text: `Add "${input}" to Store`, action: "add_product_from_context", variant: "default" },
+                { text: `Generate Full Description`, action: "request_features_for_description_context" },
+            ]
+        };
+    }
+
+    if (isAwaitingFeatures && currentAiProductContext.productName) {
+        setIsAwaitingFeatures(false);
+        try {
+            setIsTyping(true);
+            const genInput: GenerateProductDescriptionInput = {
+                productName: currentAiProductContext.productName,
+                keyFeatures: input, // User input is features/keywords
+                tone: "engaging", // Default tone
+                targetKeywords: input.split(',').map(kw => kw.trim()).filter(kw => kw.length > 0),
+                existingDescription: currentAiProductContext.initialDescription
+            };
+            const descriptionResult = await generateProductDescription(genInput);
+            setIsTyping(false);
+            setAiProductContext(prev => ({...prev, fullDescription: descriptionResult.description}));
+            return {
+                type: 'product_description_result',
+                text: `Generated full description for "${currentAiProductContext.productName}":\n\n${descriptionResult.description}\n\nReady to add it to the store?`,
+                data: { productName: currentAiProductContext.productName, description: descriptionResult.description, context: currentAiProductContext },
+                actions: [
+                     { text: `Add "${currentAiProductContext.productName}" to Store`, action: "add_product_from_context", variant: "default" },
+                     { text: "Regenerate (new features?)", action: "request_features_for_description_context" }
+                ]
+            };
+        } catch (error) {
+            console.error("Error generating product description from context:", error);
+            setIsTyping(false);
+            setIsAwaitingFeatures(false);
+            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or add manually." };
+        }
+    }
     
     if (command.includes('dashboard') || command.includes('overview') || command.includes('stats')) {
       return {
@@ -129,41 +231,44 @@ export default function HybridAdminPanelPage() {
         text: "Here's your product catalog:",
         data: storeData.products,
         actions: [
-          { text: "Add New Product", action: "add_product_interactive", variant: "default" },
-          { text: "Filter Products", action: "filter_products", variant: "outline" },
+          { text: "Add New Product (Manual)", action: "add_product_interactive", variant: "outline" },
+          { text: "Upload Image to Add", action: "trigger_image_upload_for_product", variant: "default"},
         ]
       };
     }
     
-    if ((command.includes('add') || command.includes('create')) && command.includes('product')) {
+    if (((command.includes('add') || command.includes('create')) && command.includes('product')) || command === 'manual_product_form') {
       return {
         type: 'add_product_form',
-        text: "Let's add a new product. Please provide the product name, key features, and desired tone for the description (e.g., 'SuperWidget;eco-friendly,long-lasting,smart features;professional'). Or, type 'manual' to fill a form. You can also upload an image first for analysis.",
+        text: "Let's add a new product. Please provide the product name, key features (comma separated), and desired tone for the description (e.g., 'SuperWidget;eco-friendly,long-lasting;professional'). You can also upload an image first for AI assistance.",
         actions: [
           { text: "Use AI for Description", action: "ai_product_description_prompt", variant: "default" },
-          { text: "Add Manually", action: "manual_product_form", variant: "outline" },
+          { text: "Upload Image First", action: "trigger_image_upload_for_product", variant: "outline" },
         ]
       };
     }
     
-    if (command.match(/([\w\s]+);([\w\s,]+);([\w\s]+)/) && (messages[messages.length-1]?.type === 'add_product_form' || messages[messages.length-2]?.type === 'add_product_form')) {
-        const parts = input.split(';');
-        if (parts.length === 3) {
-            const [productName, keyFeatures, tone] = parts.map(p => p.trim());
-            try {
-                setIsTyping(true);
-                const descriptionResult = await generateProductDescription({ productName, keyFeatures, tone });
-                setIsTyping(false);
-                return {
-                    type: 'product_description_result',
-                    text: `Generated description for "${productName}":\n\n${descriptionResult.description}\n\nWhat's next? You can add price, SKU, category, inventory. E.g., 'Set price to 29.99'`,
-                    data: { productName, description: descriptionResult.description },
-                };
-            } catch (error) {
-                console.error("Error generating product description:", error);
-                setIsTyping(false);
-                return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or add manually." };
-            }
+    // This regex targets the "productName;keyFeatures;tone" format for manual description generation
+    const manualDescMatch = input.match(/([\w\s\-\_'\"]+)\s*;\s*([\w\s\-\_,'\"\(\)]+)\s*;\s*([\w\s]+)/);
+    if (manualDescMatch && (lastAiMessage?.type === 'add_product_form' || lastAiMessage?.type === 'request_features_for_description')) {
+        const [, productName, keyFeatures, tone] = manualDescMatch.map(p => p.trim());
+        try {
+            setIsTyping(true);
+            const descriptionResult = await generateProductDescription({ productName, keyFeatures, tone });
+            setIsTyping(false);
+            setAiProductContext(prev => ({ ...prev, productName, fullDescription: descriptionResult.description }));
+            return {
+                type: 'product_description_result',
+                text: `Generated description for "${productName}":\n\n${descriptionResult.description}\n\nWhat's next? You can add this product to the store (it will use default price/SKU).`,
+                data: { productName, description: descriptionResult.description },
+                actions: [
+                    { text: `Add "${productName}" to Store`, action: "add_product_from_context" }
+                ]
+            };
+        } catch (error) {
+            console.error("Error generating product description (manual):", error);
+            setIsTyping(false);
+            return { type: 'error', text: "Sorry, I couldn't generate the description. Please try again or add manually." };
         }
     }
 
@@ -228,10 +333,10 @@ export default function HybridAdminPanelPage() {
     if (!inputValue.trim() && !imageDataUrl) return;
     
     const userMessageText = inputValue.trim();
-    const currentImageDataUrl = imageDataUrl; // Capture current image data URL
+    const currentImageDataUrl = imageDataUrl; 
 
     const userMessage: AIMessage = {
-      id: messages.length + 1,
+      id: messages.length + Date.now(),
       text: userMessageText,
       sender: 'user',
       timestamp: new Date(),
@@ -239,85 +344,131 @@ export default function HybridAdminPanelPage() {
       data: currentImageDataUrl ? { imageDataUrl: currentImageDataUrl, text: userMessageText } : {text: userMessageText}
     };
     
-    setMessages(prev => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setInputValue('');
-    setImageDataUrl(null);
+    setImageDataUrl(null); 
     setSelectedImageFile(null);
-    if(fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
+    if(fileInputRef.current) fileInputRef.current.value = "";
 
     setIsTyping(true);
-    await new Promise(resolve => setTimeout(resolve, 600)); // Simulate API call delay
+    await new Promise(resolve => setTimeout(resolve, 300)); 
+
+    let aiResponseMessage: AIMessage | null = null;
 
     if (currentImageDataUrl) {
       try {
         const analysisResult = await analyzeProductImage({ imageDataUri: currentImageDataUrl });
-        const aiResponseMessage: AIMessage = {
-          id: messages.length + 2, // Will be +1 at time of setting state
+        setAiProductContext({
+            imageDataUrl: currentImageDataUrl,
+            category: analysisResult.category,
+            tags: analysisResult.tags,
+            initialDescription: analysisResult.initialDescription,
+        });
+        aiResponseMessage = {
+          id: updatedMessages.length + Date.now() +1, 
           sender: 'ai',
           timestamp: new Date(),
           type: 'image_analysis_result',
-          text: `I've analyzed the image. Here's what I found:\nCategory: ${analysisResult.category}\nTags: ${analysisResult.tags.join(', ')}\n\nInitial description idea: "${analysisResult.initialDescription}"\n\nWhat is the product name? You can use this info to generate a full description.`,
+          text: `I've analyzed the image! Here's what I found:
+Category: ${analysisResult.category}
+Tags: ${analysisResult.tags.join(', ')}
+Initial description idea: "${analysisResult.initialDescription}"
+
+What is the product name for this item?`,
           data: { ...analysisResult, originalImage: currentImageDataUrl },
-          actions: [{text: "Generate Full Description", action: "add_product_interactive"}]
         };
-        setMessages(prev => [...prev, aiResponseMessage]);
+        setMessages(prev => [...prev, aiResponseMessage!]);
         
-        // If there was also text, process it after image analysis
-        if (userMessageText) {
-            setIsTyping(true); // Keep typing indicator for text processing
-            await new Promise(resolve => setTimeout(resolve, 300));
-            const textCommandResponse = await processCommand(userMessageText);
-            const textAiMessage: AIMessage = {
-                id: messages.length + 3, // Adjust ID accordingly
-                sender: 'ai',
-                timestamp: new Date(),
-                ...textCommandResponse
-            };
-            setMessages(prev => [...prev, textAiMessage]);
-        }
+        // If there was also text with the image, process it as a follow-up command
+        // For now, we assume text sent WITH an image is not a separate command.
+        // The primary path after image upload is for the AI to ask for product name.
 
       } catch (error) {
         console.error("Error analyzing product image:", error);
-        const errorResponseMessage: AIMessage = {
-          id: messages.length + 2,
+        aiResponseMessage = {
+          id: updatedMessages.length + Date.now() + 1,
           sender: 'ai',
           timestamp: new Date(),
           type: 'error',
           text: "Sorry, I couldn't analyze the image. Please try again."
         };
-        setMessages(prev => [...prev, errorResponseMessage]);
+        setMessages(prev => [...prev, aiResponseMessage!]);
       }
     } else if (userMessageText) {
-      // Only text was sent
-      const response = await processCommand(userMessageText);
-      const aiMessage: AIMessage = {
-        id: messages.length + 2,
+      const responsePart = await processCommand(userMessageText, updatedMessages, aiProductContext);
+      aiResponseMessage = {
+        id: updatedMessages.length + Date.now() + 1,
         sender: 'ai',
         timestamp: new Date(),
-        ...response
+        ...responsePart
       };
-      setMessages(prev => [...prev, aiMessage]);
+      setMessages(prev => [...prev, aiResponseMessage!]);
     }
     
     setIsTyping(false);
   };
 
   const handleQuickAction = (action: string) => {
+    if (action === "add_product_from_context") {
+        handleAddProductFromAIContext();
+        return;
+    }
+    if (action === "request_features_for_description_context") {
+        setIsAwaitingFeatures(true);
+        const requestMessage: AIMessage = {
+            id: messages.length + Date.now(),
+            sender: 'ai',
+            timestamp: new Date(),
+            type: 'request_features_for_description',
+            text: `Sure! To generate a full description for "${aiProductContext.productName}", please provide some key features or keywords (comma-separated). You can also mention the tone if you have a preference.`,
+        };
+        setMessages(prev => [...prev, requestMessage]);
+        return;
+    }
+    if (action === "trigger_image_upload_for_product") {
+        fileInputRef.current?.click();
+        return;
+    }
+
     if (mode === 'conversational') {
       let actionText = '';
-      if (action.startsWith("show_") || action.startsWith("view_") || action.startsWith("add_") || action.startsWith("filter_") || action.startsWith("process_")) {
+      if (action.startsWith("show_") || action.startsWith("view_") || action.startsWith("add_") || action.startsWith("filter_") || action.startsWith("process_") || action.startsWith("edit_product_")) {
         actionText = action.replace(/_/g, ' ');
+         if (action.startsWith("edit_product_")) {
+            toast({ title: "Edit Product", description: `Navigating to edit ${actionText.substring(13)} (mock action)`});
+            // In a real app, you'd navigate or open a modal.
+            // For now, we'll just acknowledge.
+            setInputValue(`Show product ${actionText.substring(13)} details`); // Example follow-up
+         }
       } else {
          switch (action) {
           case 'dashboard': actionText = 'Show dashboard'; break;
           case 'products': actionText = 'List products'; break;
           case 'orders': actionText = 'Show orders'; break;
+          case 'ai_product_description_prompt': 
+            setInputValue(''); // Clear input, AI will prompt
+            const promptMessage: AIMessage = {
+                id: messages.length + Date.now(),
+                text: "Okay, let's use AI. Provide product name, key features (comma-separated), and tone. Format: 'ProductName; feature1, feature2; tone'",
+                sender: 'ai',
+                timestamp: new Date(),
+                type: 'add_product_form' // Re-use form type to indicate context
+            };
+            setMessages(prev => [...prev, promptMessage]);
+            return;
           default: actionText = action; 
         }
       }
       setInputValue(actionText);
       setTimeout(() => {
-        document.getElementById('send-chat-message-button')?.click();
+        // Check if element exists before clicking
+        const sendButton = document.getElementById('send-chat-message-button');
+        if (sendButton) {
+            sendButton.click();
+        } else {
+            console.warn("Send button not found for quick action.");
+        }
       }, 0);
     } else {
       setSelectedView(action as TraditionalView);
@@ -336,10 +487,10 @@ export default function HybridAdminPanelPage() {
       <CardHeader className="p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-2xl">
+            <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-2xl overflow-hidden">
               {product.image.startsWith('http') || product.image.startsWith('data:') ? 
                 <Image src={product.image} alt={product.name} width={48} height={48} className="rounded-lg object-cover" data-ai-hint="product image"/> : 
-                product.image
+                <span className="text-2xl">{product.image}</span>
               }
             </div>
             <div>
@@ -347,7 +498,7 @@ export default function HybridAdminPanelPage() {
               <CardDescription className="text-xs">SKU: {product.sku} | Category: {product.category}</CardDescription>
             </div>
           </div>
-          <Badge variant={product.status === 'active' ? 'secondary' : 'destructive'}>
+          <Badge variant={product.status === 'active' ? 'secondary' : product.status === 'out_of_stock' ? 'destructive': 'outline'}>
             {product.status === 'active' ? 'Active' : product.status === 'out_of_stock' ? 'Out of Stock' : 'Archived'}
           </Badge>
         </div>
@@ -357,7 +508,7 @@ export default function HybridAdminPanelPage() {
           <span>Price: <span className="font-semibold">${product.price.toFixed(2)}</span></span>
           <span>Inventory: <span className={`font-semibold ${product.inventory < 10 ? 'text-destructive' : ''}`}>{product.inventory} units</span></span>
         </div>
-        {product.description && <p className="mt-2 text-muted-foreground text-xs line-clamp-2">{product.description}</p>}
+        {product.description && <p className="mt-2 text-muted-foreground text-xs line-clamp-2 whitespace-pre-wrap">{product.description}</p>}
       </CardContent>
       <CardFooter className="p-4 flex gap-2">
          <Button size="sm" variant="outline" onClick={() => toast({ title: "Edit Product", description: `Editing ${product.name}`})}>Edit</Button>
@@ -451,6 +602,12 @@ export default function HybridAdminPanelPage() {
                     <Image src={message.data.originalImage} alt="Analyzed image" width={150} height={150} className="rounded-lg object-contain max-h-36 mb-2" data-ai-hint="analyzed product" />
                 </div>
             )}
+            
+            {message.type === 'product_added_confirmation' && message.data && (
+                <div className="mt-3">
+                    <ProductCardChat product={message.data as Product} />
+                </div>
+            )}
 
             {message.type === 'product_list' && message.data && (
               <div className="mt-3 max-h-96 overflow-y-auto pr-2 space-y-2">
@@ -526,7 +683,10 @@ export default function HybridAdminPanelPage() {
           </div>
           <div className="flex space-x-2">
             <Button variant="outline"><Filter className="w-4 h-4 mr-2" />Filter</Button>
-            <Button><Plus className="w-4 h-4 mr-2" />Add Product</Button>
+            <Button onClick={() => {
+                setMode('conversational');
+                handleQuickAction('trigger_image_upload_for_product');
+            }}><Plus className="w-4 h-4 mr-2" />Add Product (AI)</Button>
           </div>
         </div>
       </CardHeader>
@@ -549,10 +709,10 @@ export default function HybridAdminPanelPage() {
             {storeData.products.map(product => (
               <TableRow key={product.id}>
                 <TableCell>
-                  <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center text-2xl">
+                  <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center text-2xl overflow-hidden">
                    {product.image.startsWith('http') || product.image.startsWith('data:') ? 
                       <Image src={product.image} alt={product.name} width={48} height={48} className="rounded-md object-cover" data-ai-hint="product thumbnail"/> : 
-                      product.image
+                      <span className="text-2xl">{product.image}</span>
                     }
                   </div>
                 </TableCell>
@@ -870,7 +1030,7 @@ export default function HybridAdminPanelPage() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder={imageDataUrl ? "Add details for the image or send as is..." : "Ask about products, orders, sales, or type a command..."}
+                    placeholder={imageDataUrl ? "Add details for the image or send as is..." : isAwaitingFeatures ? `Enter features/keywords for "${aiProductContext.productName}"...` : "Ask about products, orders, or type a command..."}
                     className="flex-1 p-3 border-border rounded-lg focus:ring-1 focus:ring-primary resize-none shadow-sm text-sm min-h-[40px]"
                     rows={1}
                   />
@@ -967,4 +1127,3 @@ export default function HybridAdminPanelPage() {
     </div>
   );
 }
-
