@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -62,6 +63,7 @@ export default function HybridAdminPanelPage() {
   const [selectedView, setSelectedView] = useState<TraditionalView>('dashboard');
   const [storeData, setStoreData] = useState<StoreData>(mockStoreData);
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
+  const [formattedTodaySales, setFormattedTodaySales] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -91,6 +93,12 @@ export default function HybridAdminPanelPage() {
     };
     fetchSuggestions();
   }, [storeData.analytics]);
+
+  useEffect(() => {
+    if (storeData.analytics.todaySales !== undefined) {
+      setFormattedTodaySales(storeData.analytics.todaySales.toLocaleString());
+    }
+  }, [storeData.analytics.todaySales]);
 
   const processCommand = async (input: string): Promise<Partial<AIMessage>> => {
     const command = input.toLowerCase().trim();
@@ -316,19 +324,34 @@ export default function HybridAdminPanelPage() {
     </Card>
   );
 
-  const AnalyticsCardChat = ({ analytics }: { analytics: AnalyticsData }) => (
-    <Card className="mb-3 shadow-sm">
-      <CardHeader className="p-4">
-        <CardTitle className="text-base">Today's Performance</CardTitle>
-      </CardHeader>
-      <CardContent className="p-4 text-sm grid grid-cols-2 gap-2">
-        <div>Sales: <span className="font-semibold">${analytics.todaySales.toLocaleString()}</span></div>
-        <div>Orders: <span className="font-semibold">{analytics.todayOrders}</span></div>
-        <div>Conversion: <span className="font-semibold">{analytics.conversionRate}%</span></div>
-        <div>Top Product: <span className="font-semibold">{analytics.topProduct}</span></div>
-      </CardContent>
-    </Card>
-  );
+  const AnalyticsCardChat = ({ analytics }: { analytics: AnalyticsData }) => {
+    const [formattedSales, setFormattedSales] = useState<string | null>(null);
+    const [formattedConversion, setFormattedConversion] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (analytics.todaySales !== undefined) {
+        setFormattedSales(analytics.todaySales.toLocaleString());
+      }
+      if (analytics.conversionRate !== undefined) {
+        setFormattedConversion(analytics.conversionRate.toLocaleString());
+      }
+    }, [analytics.todaySales, analytics.conversionRate]);
+    
+    return (
+      <Card className="mb-3 shadow-sm">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">Today's Performance</CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 text-sm grid grid-cols-2 gap-2">
+          <div>Sales: <span className="font-semibold">{formattedSales !== null ? `$${formattedSales}` : 'Loading...'}</span></div>
+          <div>Orders: <span className="font-semibold">{analytics.todayOrders}</span></div>
+          <div>Conversion: <span className="font-semibold">{formattedConversion !== null ? `${formattedConversion}%` : 'Loading...'}</span></div>
+          <div>Top Product: <span className="font-semibold">{analytics.topProduct}</span></div>
+        </CardContent>
+      </Card>
+    );
+  };
+  
 
   const MessageBubble = ({ message }: { message: AIMessage }) => {
     const isAI = message.sender === 'ai';
@@ -336,6 +359,7 @@ export default function HybridAdminPanelPage() {
 
     useEffect(() => {
       if (message.timestamp) {
+        // Ensure this runs only on the client
         setFormattedTimestamp(message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       }
     }, [message.timestamp]);
@@ -387,11 +411,11 @@ export default function HybridAdminPanelPage() {
               </div>
             )}
             
-            {formattedTimestamp && (
+            {formattedTimestamp !== null ? (
               <div className={`text-xs mt-2 ${isAI ? 'text-muted-foreground' : 'text-primary-foreground/80'}`}>
                 {formattedTimestamp}
               </div>
-            )}
+            ) : <div className={`text-xs mt-2 ${isAI ? 'text-muted-foreground' : 'text-primary-foreground/80'}`}>Loading time...</div>}
           </div>
         </div>
       </div>
@@ -530,93 +554,107 @@ export default function HybridAdminPanelPage() {
     </Card>
   );
 
-  const TraditionalDashboard = () => (
-    <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${storeData.analytics.todaySales.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">+12.5% from yesterday</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Orders Today</CardTitle>
-            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{storeData.analytics.todayOrders}</div>
-            <p className="text-xs text-muted-foreground">2 pending fulfillment</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Conversion Rate</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{storeData.analytics.conversionRate}%</div>
-            <p className="text-xs text-muted-foreground">+0.3% from last week</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Products</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{storeData.products.filter(p => p.status === 'active').length}</div>
-            <p className="text-xs text-muted-foreground">{storeData.products.filter(p => p.status === 'out_of_stock').length} out of stock</p>
-          </CardContent>
-        </Card>
-      </div>
-      
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader>
-            <CardTitle>Recent Orders</CardTitle>
-            <CardDescription>A quick glance at the latest orders.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {storeData.orders.slice(0, 3).map(order => (
-              <div key={order.id} className="mb-4 grid grid-cols-[25px_1fr_auto] items-start pb-4 last:mb-0 last:pb-0">
-                <span className={`flex h-2 w-2 translate-y-1 rounded-full bg-${order.status === 'fulfilled' ? 'green' : order.status === 'pending' ? 'yellow' : 'red'}-500`} />
-                <div className="space-y-1 ml-2">
-                  <p className="text-sm font-medium leading-none">{order.id} - {order.customer}</p>
-                  <p className="text-sm text-muted-foreground">{order.items.join(', ')}</p>
+  const TraditionalDashboard = () => {
+    const [localFormattedSales, setLocalFormattedSales] = useState<string | null>(null);
+    const [localFormattedConversion, setLocalFormattedConversion] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (storeData.analytics.todaySales !== undefined) {
+        setLocalFormattedSales(storeData.analytics.todaySales.toLocaleString());
+      }
+      if (storeData.analytics.conversionRate !== undefined) {
+        setLocalFormattedConversion(storeData.analytics.conversionRate.toLocaleString());
+      }
+    }, [storeData.analytics.todaySales, storeData.analytics.conversionRate]);
+
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{localFormattedSales !== null ? `$${localFormattedSales}`: 'Loading...'}</div>
+              <p className="text-xs text-muted-foreground">+12.5% from yesterday</p>
+            </CardContent>
+          </Card>
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Orders Today</CardTitle>
+              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{storeData.analytics.todayOrders}</div>
+              <p className="text-xs text-muted-foreground">2 pending fulfillment</p>
+            </CardContent>
+          </Card>
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Conversion Rate</CardTitle>
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{localFormattedConversion !== null ? `${localFormattedConversion}%` : 'Loading...'}</div>
+              <p className="text-xs text-muted-foreground">+0.3% from last week</p>
+            </CardContent>
+          </Card>
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Active Products</CardTitle>
+              <Package className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{storeData.products.filter(p => p.status === 'active').length}</div>
+              <p className="text-xs text-muted-foreground">{storeData.products.filter(p => p.status === 'out_of_stock').length} out of stock</p>
+            </CardContent>
+          </Card>
+        </div>
+        
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader>
+              <CardTitle>Recent Orders</CardTitle>
+              <CardDescription>A quick glance at the latest orders.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {storeData.orders.slice(0, 3).map(order => (
+                <div key={order.id} className="mb-4 grid grid-cols-[25px_1fr_auto] items-start pb-4 last:mb-0 last:pb-0">
+                  <span className={`flex h-2 w-2 translate-y-1 rounded-full bg-${order.status === 'fulfilled' ? 'green' : order.status === 'pending' ? 'yellow' : 'red'}-500`} />
+                  <div className="space-y-1 ml-2">
+                    <p className="text-sm font-medium leading-none">{order.id} - {order.customer}</p>
+                    <p className="text-sm text-muted-foreground">{order.items.join(', ')}</p>
+                  </div>
+                  <div className="ml-auto font-medium">${order.total.toFixed(2)}</div>
                 </div>
-                <div className="ml-auto font-medium">${order.total.toFixed(2)}</div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-        <Card className="shadow-lg hover:shadow-xl transition-shadow">
-          <CardHeader>
-            <CardTitle>Inventory Status</CardTitle>
-            <CardDescription>Products nearing low stock levels.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {storeData.products.filter(p => p.inventory < 20 && p.status === 'active').slice(0,3).map(product => (
-              <div key={product.id} className="mb-3">
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="font-medium">{product.name}</span>
-                  <span className={`${product.inventory < 10 ? 'text-destructive' : 'text-muted-foreground'}`}>{product.inventory} units</span>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="shadow-lg hover:shadow-xl transition-shadow">
+            <CardHeader>
+              <CardTitle>Inventory Status</CardTitle>
+              <CardDescription>Products nearing low stock levels.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {storeData.products.filter(p => p.inventory < 20 && p.status === 'active').slice(0,3).map(product => (
+                <div key={product.id} className="mb-3">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-medium">{product.name}</span>
+                    <span className={`${product.inventory < 10 ? 'text-destructive' : 'text-muted-foreground'}`}>{product.inventory} units</span>
+                  </div>
+                  <Progress value={(product.inventory / 50) * 100} className="h-2" />
                 </div>
-                <Progress value={(product.inventory / 50) * 100} className="h-2" />
-              </div>
-            ))}
-            {storeData.products.filter(p => p.inventory < 20 && p.status === 'active').length === 0 && (
-              <p className="text-sm text-muted-foreground">All products have sufficient stock.</p>
-            )}
-          </CardContent>
-        </Card>
+              ))}
+              {storeData.products.filter(p => p.inventory < 20 && p.status === 'active').length === 0 && (
+                <p className="text-sm text-muted-foreground">All products have sufficient stock.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderTraditionalContent = () => {
     switch (selectedView) {
@@ -774,7 +812,9 @@ export default function HybridAdminPanelPage() {
                     <DollarSign className="h-3 w-3 text-muted-foreground" />
                   </CardHeader>
                   <CardContent className="pb-3 px-4">
-                    <div className="text-xl font-bold">${storeData.analytics.todaySales.toLocaleString()}</div>
+                    <div className="text-xl font-bold">
+                      {formattedTodaySales !== null ? `$${formattedTodaySales}` : 'Loading...'}
+                    </div>
                   </CardContent>
                 </Card>
                 <Card className="shadow-sm">
@@ -826,3 +866,4 @@ export default function HybridAdminPanelPage() {
     </div>
   );
 }
+
