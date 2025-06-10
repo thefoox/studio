@@ -21,7 +21,10 @@ import { generateProductDescription, GenerateProductDescriptionInput } from '@/a
 import { analyzeProductImage, AnalyzeProductImageInput, AnalyzeProductImageOutput } from '@/ai/flows/analyze-product-image-flow';
 import { queryShopifyAgent, ShopifyAgentInput, ShopifyAgentOutput } from '@/ai/flows/shopify-agent-flow';
 import { useToast } from "@/hooks/use-toast";
-import { getShopInfo, ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service';
+// import { getShopInfo, ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service';
+// For now, using mock data. Uncomment getShopInfo and ServiceShopifyProduct when Shopify connection is stable.
+import type { ShopifyProduct as ServiceShopifyProduct } from '@/services/shopify-service';
+
 
 type UIMode = 'conversational' | 'traditional';
 type TraditionalView = 'dashboard' | 'products' | 'orders' | 'customers' | 'reports' | 'settings';
@@ -77,7 +80,7 @@ export default function HybridAdminPanelPage() {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 1,
-      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can upload a product image for analysis, and I can help you send it to your product orchestrator. You can also ask about your Shopify store (e.g., 'shopify: list my products').",
+      text: "Welcome to your AI-Commerce Command Center! I'm here to help you manage your store efficiently. How can I assist you today? You can upload a product image for analysis, and I can help you send it to your product orchestrator. You can also ask about your Shopify store (e.g., 'shopify: list my products'), though Shopify connection might be pending setup.",
       sender: 'ai',
       timestamp: new Date(),
       type: 'welcome',
@@ -108,8 +111,8 @@ export default function HybridAdminPanelPage() {
   const [isCallingOrchestrator, setIsCallingOrchestrator] = useState(false);
 
 
-  const [shopifyStoreInfo, setShopifyStoreInfo] = useState<ShopInfoState | null>(null);
-  const [shopifyError, setShopifyError] = useState<string | null>(null);
+  // const [shopifyStoreInfo, setShopifyStoreInfo] = useState<ShopInfoState | null>(null);
+  // const [shopifyError, setShopifyError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -150,24 +153,24 @@ export default function HybridAdminPanelPage() {
     }
   }, [storeData?.analytics]);
 
-  useEffect(() => {
-    async function fetchAndSetShopInfo() {
-      try {
-        setShopifyError(null);
-        const info = await getShopInfo();
-        if (info) {
-          setShopifyStoreInfo(info);
-        } else {
-          setShopifyError("Could not retrieve Shopify store information. Ensure .env variables are correct and client initialized.");
-        }
-      } catch (error: any) {
-        console.error("Error fetching Shopify store info in component:", error);
-        setShopifyError(`Failed to connect to Shopify: ${error.message || 'Unknown error'}. Check .env, API access, and connectivity.`);
-        setShopifyStoreInfo(null);
-      }
-    }
-    fetchAndSetShopInfo();
-  }, []);
+  // useEffect(() => {
+  //   async function fetchAndSetShopInfo() {
+  //     try {
+  //       setShopifyError(null);
+  //       const info = await getShopInfo(); // This function is from shopify-service
+  //       if (info) {
+  //         setShopifyStoreInfo(info);
+  //       } else {
+  //         setShopifyError("Could not retrieve Shopify store information. Ensure .env variables are correct and client initialized.");
+  //       }
+  //     } catch (error: any) {
+  //       console.error("Error fetching Shopify store info in component:", error);
+  //       setShopifyError(`Failed to connect to Shopify: ${error.message || 'Unknown error'}. Check .env, API access, and connectivity.`);
+  //       setShopifyStoreInfo(null);
+  //     }
+  //   }
+  //   fetchAndSetShopInfo();
+  // }, []);
 
 
   const handleAddProductViaOrchestrator = async () => {
@@ -193,8 +196,8 @@ export default function HybridAdminPanelPage() {
         category: aiProductContext.category,
         tags: aiProductContext.tags,
       },
-      imageDataUri: aiProductContext.imageDataUrl, // This might need adjustment based on your orchestrator's capabilities
-      variants: [], // Placeholder: Your orchestrator likely expects a specific structure for variants
+      imageDataUri: aiProductContext.imageDataUrl, 
+      variants: [], 
     };
 
     try {
@@ -206,7 +209,7 @@ export default function HybridAdminPanelPage() {
         body: JSON.stringify(payload),
       });
 
-      const result = await response.json(); // Assuming orchestrator responds with JSON
+      const result = await response.json(); 
 
       if (response.ok) {
         toast({ title: "Product Creation Initiated!", description: `"${aiProductContext.productName}" sent to orchestrator. Response: ${result.message || 'Success!'}` });
@@ -214,9 +217,9 @@ export default function HybridAdminPanelPage() {
           id: messages.length + Date.now() + 1,
           sender: 'ai',
           timestamp: new Date(),
-          type: 'product_added_confirmation', // Keeping type for potential specific rendering
+          type: 'product_added_confirmation', 
           text: `Successfully sent "${aiProductContext.productName}" to your product orchestrator! 🎉\nServer response: ${JSON.stringify(result)}.\nNote: Product lists here still show mock data.`,
-          data: result, // Store API response
+          data: result, 
         };
       } else {
         throw new Error(result.error || result.message || `Server responded with ${response.status}`);
@@ -234,7 +237,7 @@ export default function HybridAdminPanelPage() {
     } finally {
       setIsCallingOrchestrator(false);
       setMessages(prev => [...prev, apiCallMessage]);
-      setAiProductContext({}); // Clear context after attempt
+      setAiProductContext({}); 
     }
   };
 
@@ -555,9 +558,8 @@ What is the product name for this item?`,
         actionText = action.replace(/_/g, ' ');
          if (action.startsWith("edit_product_")) {
             toast({ title: "Edit Product", description: `Functionality to edit products created via orchestrator is not yet implemented here.`});
-            // setInputValue(`Show product ${actionText.substring(13)} details`); 
          } else if (action === "add_product_interactive") {
-            actionText = "add product via orchestrator"; // Specific text for this button
+            actionText = "add product via orchestrator"; 
          }
       } else {
          switch (action) {
@@ -724,7 +726,7 @@ What is the product name for this item?`,
             
             {message.type === 'user_image_upload' && message.data?.imageDataUrl && (
               <div className="mt-2">
-                <Image src={message.data.imageDataUrl} alt="Uploaded preview" width={200} height={200} className="rounded-lg object-contain max-h-48" data-ai-hint="uploaded product" />
+                <Image src={message.data.imageDataUrl} alt="Uploaded preview" width={200} height={200} className="rounded-lg object-contain max-h-48" data-ai-hint="uploaded product"/>
               </div>
             )}
 
@@ -734,13 +736,6 @@ What is the product name for this item?`,
                 </div>
             )}
             
-            {/* No longer showing ProductCardChat for product_added_confirmation as it's not added to local mock data */}
-            {/* {message.type === 'product_added_confirmation' && message.data && (
-                <div className="mt-3">
-                    <ProductCardChat product={message.data as Product} /> 
-                </div>
-            )} */}
-
             {message.type === 'shopify_agent_response' && message.data?.productDataForCard && (
                  <div className="mt-3">
                     <ProductCardChat product={message.data.productDataForCard as ServiceShopifyProduct} isShopifyProduct={true} />
@@ -950,6 +945,7 @@ What is the product name for this item?`,
 
     return (
       <div className="space-y-6">
+        {/* Shopify Store Status Card - Commented Out
         <Card className="shadow-lg hover:shadow-xl transition-shadow">
           <CardHeader>
             <div className="flex items-center space-x-2">
@@ -969,7 +965,7 @@ What is the product name for this item?`,
             {shopifyError && (
               <div className="space-y-2 text-sm">
                 <p className="text-destructive flex items-center"><AlertCircle className="w-4 h-4 mr-2"/><strong>Connection Error:</strong> {shopifyError}</p>
-                <p className="text-muted-foreground">Please ensure your `SHOPIFY_STORE_DOMAIN` and `SHOPIFY_ADMIN_ACCESS_TOKEN` are correctly set in the `.env` file and your app has the necessary permissions.</p>
+                <p className="text-muted-foreground">Please ensure your `SHOPIFY_SHOP_DOMAIN` and `SHOPIFY_ADMIN_ACCESS_TOKEN` are correctly set in the `.env` file and your app has the necessary permissions.</p>
               </div>
             )}
             {!shopifyStoreInfo && !shopifyError && (
@@ -977,6 +973,7 @@ What is the product name for this item?`,
             )}
           </CardContent>
         </Card>
+        */}
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="shadow-lg hover:shadow-xl transition-shadow">
@@ -1143,8 +1140,8 @@ What is the product name for this item?`,
             
             <div className="flex items-center space-x-4">
                <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-                <div className={`w-2 h-2 rounded-full ${mode === 'conversational' ? 'bg-primary animate-pulse' : (shopifyStoreInfo ? 'bg-green-500' : shopifyError ? 'bg-red-500' : 'bg-yellow-500')}`}></div>
-                <span>{mode === 'conversational' ? 'AI Active' : (shopifyStoreInfo ? 'Shopify Connected' : shopifyError ? 'Shopify Connection Error' : 'Shopify Connecting...')}</span>
+                <div className={`w-2 h-2 rounded-full ${mode === 'conversational' ? 'bg-primary animate-pulse' : 'bg-gray-400'}`}></div>
+                <span>{mode === 'conversational' ? 'AI Active' : 'Using Mock Data'}</span>
               </div>
               <Input type="search" placeholder="Search everything..." className="w-64 h-9 rounded-full text-xs bg-muted border-none focus-visible:ring-primary" />
               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground"><Bell className="w-5 h-5" /></Button>
@@ -1177,7 +1174,7 @@ What is the product name for this item?`,
               <div className="bg-card border-t border-border p-4 sticky bottom-0">
                  {imageDataUrl && (
                   <div className="mb-2 p-2 border rounded-lg bg-muted relative max-w-xs">
-                    <Image src={imageDataUrl} alt="Selected preview" width={80} height={80} className="rounded object-contain" data-ai-hint="selected image preview" />
+                    <Image src={imageDataUrl} alt="Selected preview" width={80} height={80} className="rounded object-contain" data-ai-hint="selected image preview"/>
                     <Button 
                       variant="ghost" 
                       size="icon" 
@@ -1308,4 +1305,3 @@ What is the product name for this item?`,
     </div>
   );
 }
-
