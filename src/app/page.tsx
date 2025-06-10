@@ -332,6 +332,14 @@ export default function HybridAdminPanelPage() {
 
   const MessageBubble = ({ message }: { message: AIMessage }) => {
     const isAI = message.sender === 'ai';
+    const [formattedTimestamp, setFormattedTimestamp] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (message.timestamp) {
+        setFormattedTimestamp(message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      }
+    }, [message.timestamp]);
+
     return (
       <div className={`flex ${isAI ? 'justify-start' : 'justify-end'} mb-4`}>
         <div className={`flex gap-2 max-w-xl ${isAI ? '' : 'flex-row-reverse'}`}>
@@ -379,9 +387,11 @@ export default function HybridAdminPanelPage() {
               </div>
             )}
             
-            <div className={`text-xs mt-2 ${isAI ? 'text-muted-foreground' : 'text-primary-foreground/80'}`}>
-              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </div>
+            {formattedTimestamp && (
+              <div className={`text-xs mt-2 ${isAI ? 'text-muted-foreground' : 'text-primary-foreground/80'}`}>
+                {formattedTimestamp}
+              </div>
+            )}
           </div>
         </div>
       </div>
